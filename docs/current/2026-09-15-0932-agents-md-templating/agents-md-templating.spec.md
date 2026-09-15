@@ -51,20 +51,28 @@ initial template/values) and un-template/adopt-back (rendered output becomes
 self-authored canon again; template machinery removed). Neither runs as a side
 effect of `enable`/`disable`.
 
-## 3. Engine & layout
+## 3. Engine & inputs — deliberately undecided
 
-- **Engine: Jinja2.** Recommended subset documented (variables, includes,
-  loops for ToC building, a small set of custom filters for byte-size and
-  heading-extraction); full power available.
-- **Layout (tentative, follows wiring spec canon conventions):**
+The template engine, data format for values, and file layout are **not
+chosen yet** — they wait for the tooling/software/libs research pass that the
+wiring spec defers (§14.5 there; this spec inherits the deferral). What is
+settled is what the engine must *support*:
+
+- Variables and composition (includes/partials) — the mechanism behind
+  render-time expansion (§5).
+- Loops/iteration — required for ToC generation from referenced docs.
+- Deterministic, byte-idempotent output (§4) — no timestamps, stable ordering.
+- Sandboxing/limits appropriate for rendering a file that agents consume.
+
+**Layout (tentative shape, names TBD):**
 
   ```
   repo/
     AGENTS.md                    # rendered output (generated, wiring-spec §12 contract)
     .ai/
       agents-md/
-        AGENTS.md.j2             # template (canon)
-        values.yaml              # values (canon)
+        <template>               # template (canon)
+        <values>                 # values (canon)
   ```
 
 - Config in `harness-hub.json` gains an `agentsMd: { templated: true }` key.
@@ -100,8 +108,10 @@ effect of `enable`/`disable`.
 
 1. **Command name & surface** — `render` vs `build`; flags (e.g. `--check`
    for CI drift detection).
-2. **Values schema** — free-form YAML vs a light required set
-   (`purpose`, `git.branching`) that drives the default template.
+2. **Engine, values format & layout** — pick via the tooling research pass
+   (with the wiring deliverable's), against the §3 requirements; includes
+   whether values are free-form or a light required set (`purpose`,
+   `git.branching`) that drives the default template.
 3. **Include boundaries** — can templates include files outside
    `.ai/agents-md/` (e.g. pull a summary from `docs/`)? Symlink-escape and
    Windows concerns mirror wiring spec §13.12.

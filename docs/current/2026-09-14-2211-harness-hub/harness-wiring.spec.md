@@ -1,8 +1,8 @@
 # harness-hub — Wiring & Setup Specification (First Draft)
 
-**Status:** draft — implementation decisions for wiring repos to multiple harnesses; scoped to wire-in/setup/config (templating is a separate deliverable, see §14.8)
+**Status:** draft — implementation decisions for wiring repos to multiple harnesses; scoped to wire-in/setup/config (templating is a separate deliverable, see §14.8). The implementation stack is deliberately undecided pending a tooling research pass (§14.5)
 **Date:** 2026-09-14
-**Decided:** Python CLI · per-harness adapters · canon folder `.ai/` (configurable) · `AGENTS.md` as the agent doc ·
+**Decided:** per-harness adapters · canon folder `.ai/` (configurable) · `AGENTS.md` as the agent doc ·
 initial harnesses **Claude Code, Cursor, OpenCode** · future harnesses tracked now: **Codex, Hermes, Pi, DeepSeek**
 
 ---
@@ -387,7 +387,7 @@ and pinned to the harness versions recorded in
 ## 14. Open questions & settled directions
 
 Resolved items stay listed here with their resolution until the follow-on
-spec/plan absorbs them (see §14.5, §14.8).
+spec/plan absorbs them (see §14.8).
 
 1. **Skills canon alignment** — adopt `.agents/skills/` as physical canon (§5a)
    or copy-only from `.ai/skills/` (§5b)? Recommendation: (a).
@@ -396,8 +396,10 @@ spec/plan absorbs them (see §14.5, §14.8).
 3. **Commands** — keep legacy dirs (copy) or generate-as-skills for Claude Code
    and Cursor now (§6)?
 4. **Hooks** — confirm out of first-draft scope (§9).
-5. **Package/install** — `harness-hub` console script on PyPI, run via
-   `uvx harness-hub`.
+5. **Implementation stack, packaging & install** — deliberately undecided.
+   Language, libraries, packaging, and distribution all wait for a
+   tooling/software/libs research pass, run **after the harness assets are
+   settled**; this spec is stack-neutral by design.
 6. **Canon folder default** — `.ai/` as umbrella for assets without a shared
    home; configurable in `harness-hub.json`. If §14.1 → (a), skills canon is
    repo-root `.agents/skills/` instead of `.ai/skills/`.
@@ -407,7 +409,8 @@ spec/plan absorbs them (see §14.5, §14.8).
    [`2026-09-15-0932-agents-md-templating/agents-md-templating.spec.md`](../2026-09-15-0932-agents-md-templating/agents-md-templating.spec.md).
    Summary of the settled model (2026-09-15): optional templating mode where
    template + values are canon and the rendered `AGENTS.md` is a generated
-   §12-contract artifact — Jinja2, harness-agnostic render inputs, explicit
+   §12-contract artifact — template engine TBD (tooling research deferred,
+   see the follow-up spec), harness-agnostic render inputs, explicit
    render command with render-drift doctor check, `disable` never removes the
    rendered doc. The follow-up spec owns the details; this spec's scope stays
    wire-in/setup/config.
