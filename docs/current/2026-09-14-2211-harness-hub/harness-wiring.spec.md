@@ -1,6 +1,6 @@
-# harness-hub — Specification (First Draft)
+# harness-hub — Wiring & Setup Specification (First Draft)
 
-**Status:** draft — organized by asset type; straightforward assets decided, nuanced assets carry open decisions
+**Status:** draft — implementation decisions for wiring repos to multiple harnesses; scoped to wire-in/setup/config (templating is a separate deliverable, see §14.8)
 **Date:** 2026-09-14
 **Decided:** Python CLI · per-harness adapters · canon folder `.ai/` (configurable) · `AGENTS.md` as the agent doc ·
 initial harnesses **Claude Code, Cursor, OpenCode** · future harnesses tracked now: **Codex, Hermes, Pi, DeepSeek**
@@ -31,6 +31,10 @@ Core promises:
 
 - Editing or generating canon content.
 - Supporting every harness — three now, four more designed-for later.
+- Nested/subdirectory canon — v1 wires only the root canon (§3). Nested
+  instruction files are **detected and reported** by `doctor`, never wired or
+  managed (§11, §13.9): harnesses discover nested files by different mechanics
+  and at different times, so full support would fork the tool per harness.
 - Subset-supported and divergent assets — MCP, LSP, permissions, routines,
   themes/memories — are researched in `harness-quirks-out-of-scope.insight.md`
   but out of implementation scope for the first draft.
@@ -251,6 +255,18 @@ or read by the agent on demand. OpenCode's `instructions` globs could wire
 rules (§8). No canon `docs/` folder in the first draft — confirm intent before
 designing one.
 
+**Document chaining is a repo convention, not a harness-hub feature.** There
+is no cross-harness import/include standard: `@path` expansion exists only in
+Claude Code (Hermes has one in flight — see
+`harness-agent-doc.insight.md`), and nothing auto-loads plain relative-path
+references. The portable convention the research supports: keep the root doc
+small, reference supplementary docs by plain relative path (agents can follow
+them with file tools), and put task-scoped disclosure in skills (§5). Canon
+may hold referenced docs — they need no wiring — but critical guidance must
+never live only behind a reference. `doctor` checks for the failure modes
+(import lines that expand nowhere, broken references — §11). Any deeper
+doc-chaining support (auto-embedding, doc graphs) must earn its place later.
+
 ---
 
 ## 11. CLI surface (first draft)
@@ -275,6 +291,9 @@ the §12 refusal rules.
 | Check | What it detects | Example remediation |
 |---|---|---|
 | **Precedence interference** | Files that silently outrank or amend `AGENTS.md` for enabled harnesses: `AGENTS.override.md` (Codex, Pi), `AGENTS.local.md` (DeepSeek), `.hermes.md` (Hermes), `CLAUDE.local.md` (Claude Code), `.cursorrules` | Remove the file, gitignore it, or merge its content into canon `AGENTS.md` |
+| **Nested file inventory** | Instruction files below the root (nested `AGENTS.md`/`CLAUDE.md`, override/local variants) that harnesses discover by their own mechanics — combined, chained, or lazily (see `harness-agent-doc.insight.md`). Inventory is inherently incomplete for harnesses whose discovery reaches above the repo root (Pi, Claude Code). **Advisory only — nested canon is out of scope (§1); harness-hub never wires or manages these files** | Keep general guidance root-only; subtree files only for genuinely scoped rules; remove nested override files unless intentional; align nested content with canon (dedupe) |
+| **Import lines in canon** | `@path`-style import lines in canon `AGENTS.md`: they expand into context in Claude Code only and are literal noise elsewhere (Hermes has an equivalent in flight — `harness-agent-doc.insight.md`); also flags import targets that don't exist or resolve outside the repo | Inline the content into the doc, keep it as a documented Claude-only addition, or convert to a plain relative-path reference |
+| **Doc references** | Relative-path references from canon to docs that are missing or moved; sections of critical guidance (verification, safety, conventions) that live *only* behind references — no harness auto-loads them | Fix the path; inline critical guidance; keep references for supplementary depth only (§10) |
 | **Clobber risk** | Non-generated harness files `enable` would refuse to touch (hand-written `CLAUDE.md`, existing skills named like canon skills) | Adopt into canon manually, rename, or accept the refusal |
 | **Drift** | Canon changed since last enable; generated files missing or hand-modified | Re-run `enable` to refresh the wiring |
 | **Size caps** | `AGENTS.md` byte size vs the smallest known cap among enabled harnesses (Codex 32 KiB default; Hermes dynamic; DeepSeek bounded), warning at a threshold (e.g. 80%) | Trim the doc; move guidance into skills/rules |
@@ -343,8 +362,15 @@ and pinned to the harness versions recorded in
 8. **Skills with supporting files.** `SKILL.md` dirs may contain `scripts/`,
    `references/`, `assets/` — copies must be whole-directory and preserve
    relative paths; collision rules from (1) apply per file, not per skill.
-9. **Nested repos / monorepos.** Nested `AGENTS.md` (Cursor, Codex, Hermes, Pi)
-   and per-subdirectory canon are a likely v2; root-only canon keeps v1 honest.
+9. **Nested repos / monorepos.** Nested `AGENTS.md`/`CLAUDE.md` files are
+   discovered below the root by all three mechanics (combined: Cursor; chained:
+   Codex, DeepSeek, Pi; lazy/progressive: Claude Code, OpenCode, Hermes) —
+   per-subdirectory canon is **out of scope for v1** (§1): harness-hub
+   wires only root canon and never manages nested files. `doctor` inventories
+   them and warns (§11); wiring them would mean adopting per-harness discovery
+   mechanics — combine/chain/lazy — into the tool. A v2 that adds nested canon
+   must first earn its place with a concrete workflow need, not anticipatory
+   design.
 10. **Canon location vs emerging standards.** `.agents/skills/` is becoming a
     shared convention; `.ai/` is ours. Canon-alignment (§5a) reduces generated
     files but entangles canon layout with harness conventions — revisit if more
@@ -358,7 +384,10 @@ and pinned to the harness versions recorded in
 
 ---
 
-## 14. Open questions
+## 14. Open questions & settled directions
+
+Resolved items stay listed here with their resolution until the follow-on
+spec/plan absorbs them (see §14.5, §14.8).
 
 1. **Skills canon alignment** — adopt `.agents/skills/` as physical canon (§5a)
    or copy-only from `.ai/skills/` (§5b)? Recommendation: (a).
@@ -374,3 +403,11 @@ and pinned to the harness versions recorded in
    repo-root `.agents/skills/` instead of `.ai/skills/`.
 7. **Future-harness admission** — when Codex/Hermes/Pi/DeepSeek adapters are
    wanted, each starts as a verification spike (§13.11) before an adapter spec.
+8. **AGENTS.md templating** — **extracted to its own deliverable:**
+   [`2026-09-15-0932-agents-md-templating/agents-md-templating.spec.md`](../2026-09-15-0932-agents-md-templating/agents-md-templating.spec.md).
+   Summary of the settled model (2026-09-15): optional templating mode where
+   template + values are canon and the rendered `AGENTS.md` is a generated
+   §12-contract artifact — Jinja2, harness-agnostic render inputs, explicit
+   render command with render-drift doctor check, `disable` never removes the
+   rendered doc. The follow-up spec owns the details; this spec's scope stays
+   wire-in/setup/config.

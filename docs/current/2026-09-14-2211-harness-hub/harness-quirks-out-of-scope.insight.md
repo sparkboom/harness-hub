@@ -1,7 +1,7 @@
 # Quirks & out-of-scope assets — harness research
 
 **Type:** research insight · companion to the per-asset insight files for harness-hub.
-**Companion spec:** [`harness-hub.spec.md`](./harness-hub.spec.md) — implementation decisions live there.
+**Companion spec:** [`harness-wiring.spec.md`](./harness-wiring.spec.md) — implementation decisions live there.
 **Researched against the harness versions in** [`harness-versions.insight.md`](./harness-versions.insight.md).
 
 This file records assets that are **out of canon scope** — either because the

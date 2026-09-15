@@ -1,7 +1,7 @@
 # Agent doc — harness discovery research
 
 **Type:** research insight · one of the per-asset insight files for harness-hub.
-**Companion spec:** [`harness-hub.spec.md`](./harness-hub.spec.md) — implementation decisions live there.
+**Companion spec:** [`harness-wiring.spec.md`](./harness-wiring.spec.md) — implementation decisions live there.
 **Asset:** the repo-root agent instructions file (`AGENTS.md` canon).
 **Researched against the harness versions in** [`harness-versions.insight.md`](./harness-versions.insight.md).
 

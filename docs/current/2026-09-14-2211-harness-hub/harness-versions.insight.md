@@ -1,7 +1,7 @@
 # Harness versions — research currency record
 
 **Type:** research insight · companion to the per-asset insight files for harness-hub.
-**Companion spec:** [`harness-hub.spec.md`](./harness-hub.spec.md).
+**Companion spec:** [`harness-wiring.spec.md`](./harness-wiring.spec.md).
 
 Every per-asset insight file documents harness behavior that changes between
 releases — discovery paths, caps, precedence rules, config schemas. This file
