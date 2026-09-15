@@ -2,6 +2,7 @@
 
 **Type:** research insight · one of the per-asset insight files for harness-hub.
 **Companion spec:** [`harness-hub.spec.md`](./harness-hub.spec.md) — implementation decisions live there.
+**Researched against the harness versions in** [`harness-versions.insight.md`](./harness-versions.insight.md).
 **Asset:** deterministic scripts/code bound to agent lifecycle events.
 
 ## Matrix

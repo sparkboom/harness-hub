@@ -24,6 +24,8 @@ Core promises:
    and regenerable; canon content is never modified.
 4. **Idempotent.** Running enable twice produces the same result; re-running after
    canon changes refreshes the wiring.
+5. **Diagnosable.** `harness-hub doctor` verifies the wiring, detects
+   interference and drift, and recommends remediation.
 
 ### Non-goals (first draft)
 
@@ -53,6 +55,7 @@ traps. The spec below records only **implementation decisions**.
 | `harness-rules.insight.md` | Rules |
 | `harness-hooks.insight.md` | Hooks |
 | `harness-quirks-out-of-scope.insight.md` | Workflows, memories, themes, MCP, LSP, permissions, routines, … |
+| `harness-versions.insight.md` | Research currency: harness roster + versions the research reflects |
 
 Wiring strategies used in this spec (cheapest sufficient one wins — this is
 where the hybrid model lives):
@@ -253,10 +256,41 @@ designing one.
 ## 11. CLI surface (first draft)
 
 - `harness-hub init` — create `.ai/` skeleton + `harness-hub.json`.
-- `harness-hub enable <harness>…` — wire one or more harnesses.
+- `harness-hub enable <harness>…` — wire one or more harnesses. Runs the doctor
+  pre-flight first (see below).
 - `harness-hub disable <harness>…` — unwire, removing only generated files.
-- `harness-hub status` — canon location, enabled harnesses, drift report, and
-  **interference warnings** (see §13.4).
+- `harness-hub status` — passive state summary: canon location, enabled
+  harnesses, drift report.
+- `harness-hub doctor` — active health checks: verifies the configuration, flags
+  risks with recommended remediation (see "Doctor checks").
+
+### Doctor checks
+
+`doctor` is read-only — it never modifies files; every finding carries a
+recommended remediation the user applies themselves (auto-fix is a possible
+later flag). It runs standalone on demand and as a **pre-flight before
+`enable`**: warnings are surfaced but don't block; blocking conditions remain
+the §12 refusal rules.
+
+| Check | What it detects | Example remediation |
+|---|---|---|
+| **Precedence interference** | Files that silently outrank or amend `AGENTS.md` for enabled harnesses: `AGENTS.override.md` (Codex, Pi), `AGENTS.local.md` (DeepSeek), `.hermes.md` (Hermes), `CLAUDE.local.md` (Claude Code), `.cursorrules` | Remove the file, gitignore it, or merge its content into canon `AGENTS.md` |
+| **Clobber risk** | Non-generated harness files `enable` would refuse to touch (hand-written `CLAUDE.md`, existing skills named like canon skills) | Adopt into canon manually, rename, or accept the refusal |
+| **Drift** | Canon changed since last enable; generated files missing or hand-modified | Re-run `enable` to refresh the wiring |
+| **Size caps** | `AGENTS.md` byte size vs the smallest known cap among enabled harnesses (Codex 32 KiB default; Hermes dynamic; DeepSeek bounded), warning at a threshold (e.g. 80%) | Trim the doc; move guidance into skills/rules |
+| **Canon asset validity** | `SKILL.md` missing required `name`/`description` frontmatter (Agent Skills standard); malformed frontmatter; empty asset dirs | Fix frontmatter or remove the asset |
+| **Config merge integrity** | Harness-hub-owned keys in merge-edited configs (`opencode.json` etc.) missing or altered, vs the ownership ledger in `harness-hub.json` | Re-run `enable` to re-apply, or hand-reconcile |
+| **Canon layout** | `harness-hub.json` unparseable; canon path missing; stray files inside generated target directories | Clean up, or re-init |
+
+Findings carry severity (`error` / `warning` / `info`); exit code is non-zero
+when errors are present, so `doctor` can gate scripts or CI.
+
+Per-asset failure modes — what can go wrong with each asset, how to identify
+it, and possible resolutions — live in the corresponding insight file (e.g.
+agent-doc failure modes in `harness-agent-doc.insight.md`). Insight files are
+research only; how harness-hub addresses a failure mode is decided in the spec
+and pinned to the harness versions recorded in
+`harness-versions.insight.md`.
 
 ---
 
@@ -290,11 +324,12 @@ designing one.
 3. **Size caps.** Codex caps `AGENTS.md` guidance at 32KiB by default (configurable);
    Hermes caps context files dynamically; DeepSeek bounds its instruction chain.
    If canon `AGENTS.md` grows, harnesses truncate **silently and differently**.
-   `status` should measure and warn near the smallest known cap.
+   `doctor` measures and warns near the smallest known cap (§11).
 4. **First-match-wins interference.** Hermes loads `.hermes.md` over `AGENTS.md`;
    Codex/Pi prefer `AGENTS.override.md`; DeepSeek loads `AGENTS.local.md`
    additively. Leftover override/local files mean canon guidance is silently
-   amended or replaced. `status` must detect higher-precedence files and warn.
+   amended or replaced. `doctor` detects higher-precedence files and recommends
+   remediation (§11).
 5. **Config merge drift.** Merge-editing `opencode.json` (JSONC — comments possible)
    and later TOML/JSON harness configs requires comment/format-preserving edits
    and tracked key ownership so `disable` removes exactly what was added.
@@ -303,7 +338,8 @@ designing one.
    generate-as-skills vs legacy dirs per harness (§14.3), don't do both.
 7. **Copy drift & regeneration triggers.** Copy-based wiring diverges from canon
    the moment canon changes. Options: manual re-enable, `sync` command, file
-   watcher, or pre-commit/git hook. First draft: manual + `status` drift report.
+   watcher, or pre-commit/git hook. First draft: manual re-enable + `status`
+   / `doctor` drift report.
 8. **Skills with supporting files.** `SKILL.md` dirs may contain `scripts/`,
    `references/`, `assets/` — copies must be whole-directory and preserve
    relative paths; collision rules from (1) apply per file, not per skill.
