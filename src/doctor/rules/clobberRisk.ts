@@ -42,7 +42,7 @@ export const clobberRiskRule: DoctorRule = {
         const target = relativeSymlinkTarget(ctx.repoRoot, entry.agentsDoc.symlinkPath, join(ctx.repoRoot, AGENTS_MD_FILENAME));
         if (pathPresent(linkPath) && !isSymlinkTo(linkPath, target)) {
           findings.push({
-            ruleId: 'clobber-risk',
+            ruleId: 'claude-md-clobber',
             severity: 'error',
             message: `${entry.agentsDoc.symlinkPath} exists and is not a symlink to AGENTS.md.`,
             remediation: `Remove or back up ${entry.agentsDoc.symlinkPath}, or re-run enable with --force to replace it.`,
@@ -57,7 +57,7 @@ export const clobberRiskRule: DoctorRule = {
         const target = relativeSymlinkTarget(ctx.repoRoot, entry.skills.symlinkPath, skillsRootDir(ctx.repoRoot));
         if (pathPresent(linkPath) && lstatSync(linkPath).isSymbolicLink() && !isSymlinkTo(linkPath, target)) {
           findings.push({
-            ruleId: 'clobber-risk',
+            ruleId: 'claude-skills-clobber',
             severity: 'error',
             message: `${entry.skills.symlinkPath} is a symlink, but not to .agents/skills.`,
             remediation: `Remove the existing ${entry.skills.symlinkPath} symlink, or re-run enable with --force to replace it.`,

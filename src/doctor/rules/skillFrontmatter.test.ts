@@ -29,7 +29,9 @@ describe('skillFrontmatterRule', () => {
     const dir = join(repoRoot, '.agents', 'skills', 'writing-tests');
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, 'SKILL.md'), '---\nname: other\ndescription: x\n---\n');
-    expect(skillFrontmatterRule.check(makeCtx(repoRoot)).length).toBeGreaterThan(0);
+    const findings = skillFrontmatterRule.check(makeCtx(repoRoot));
+    expect(findings.length).toBeGreaterThan(0);
+    expect(findings.some((f) => f.ruleId === 'skill-name-mismatch')).toBe(true);
   });
 
   it('skips directories with no SKILL.md (left to skill-shape rule)', () => {

@@ -59,7 +59,7 @@ export function migrateHarness(repoRoot: string, harnessId: HarnessId): MigrateC
   }
 
   // Spec §6: validate every entry against the skill-shape/frontmatter contract
-  // BEFORE adopting it — anything that fails is a clobber-risk error, because
+  // BEFORE adopting it — anything that fails is an invalid-skill error, because
   // adopting junk would poison every future enable with canon-wide errors.
   const invalid = toCopy.filter((e) => {
     const { hasSkillMd, frontmatter } = readHarnessSkillFrontmatter(join(e.harnessSkillPath, 'SKILL.md'));
@@ -70,7 +70,7 @@ export function migrateHarness(repoRoot: string, harnessId: HarnessId): MigrateC
       (e) => `  ${entry.skills.symlinkPath}/${e.name}/ fails the skill contract (missing or invalid SKILL.md frontmatter)`
     );
     return {
-      output: `harness-hub migrate: clobber-risk — refusing to adopt invalid skill(s), fix by hand and re-run:\n${lines.join('\n')}`,
+      output: `harness-hub migrate: invalid skill — refusing to adopt invalid skill(s), fix by hand and re-run:\n${lines.join('\n')}`,
       exitCode: 1,
     };
   }

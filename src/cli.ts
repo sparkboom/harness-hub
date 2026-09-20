@@ -23,7 +23,7 @@ export async function main(argv: string[]): Promise<number> {
 
   program
     .command('enable <harnesses...>')
-    .option('--force', 'overwrite clobber-risk findings (CLAUDE.md, .claude/skills symlink target)')
+    .option('--force', 'overwrite clobber findings (CLAUDE.md, .claude/skills symlink target)')
     .action((harnesses: string[], opts: { force?: boolean }) => {
       const repoRoot = findRepoRoot(process.cwd());
       const harnessIds = parseHarnessIds(harnesses);

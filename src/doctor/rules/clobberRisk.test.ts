@@ -36,6 +36,7 @@ describe('clobberRiskRule', () => {
     writeFileSync(join(repoRoot, 'CLAUDE.md'), '# hand-written\n');
     const findings = clobberRiskRule.check(makeCtx(repoRoot, ['claude-code']));
     expect(findings.some((f) => f.message.includes('CLAUDE.md'))).toBe(true);
+    expect(findings.some((f) => f.ruleId === 'claude-md-clobber')).toBe(true);
     expect(findings.every((f) => f.forceable)).toBe(true);
   });
 
@@ -44,6 +45,7 @@ describe('clobberRiskRule', () => {
     symlinkSync('/somewhere/else', join(repoRoot, '.claude', 'skills'));
     const findings = clobberRiskRule.check(makeCtx(repoRoot, ['claude-code']));
     expect(findings.some((f) => f.message.includes('.claude/skills'))).toBe(true);
+    expect(findings.some((f) => f.ruleId === 'claude-skills-clobber')).toBe(true);
   });
 
   it('does not flag .claude/skills when it is a real directory (handled by the skill-migration rule instead)', () => {

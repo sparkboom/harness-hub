@@ -56,7 +56,7 @@ export function enableHarnesses(
       // Spec §8: re-running enable refreshes the wiring. Doctor's drift rule
       // covers already-configured harnesses, so repair the symlinks idempotently
       // when it reports drift (a blocking guard above keeps foreign files safe).
-      const drifted = harnessFindings.some((f) => f.ruleId === 'generated-file-drift' && f.severity === 'warning');
+      const drifted = harnessFindings.some((f) => f.ruleId === 'claude-drift' && f.severity === 'warning');
       if (drifted) {
         wireMigrateSymlinkHarness(repoRoot, entry);
       }
