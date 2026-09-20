@@ -28,10 +28,10 @@ describe('migrateHarness', () => {
 
   it('copies a new skill into canon without touching .claude/skills', () => {
     mkdirSync(join(repoRoot, '.claude', 'skills', 'a'), { recursive: true });
-    writeFileSync(join(repoRoot, '.claude', 'skills', 'a', 'SKILL.md'), 'body');
+    writeFileSync(join(repoRoot, '.claude', 'skills', 'a', 'SKILL.md'), '---\nname: a\ndescription: x\n---\nbody');
     const result = migrateHarness(repoRoot, 'claude-code');
     expect(result.exitCode).toBe(0);
-    expect(readFileSync(join(repoRoot, '.agents', 'skills', 'a', 'SKILL.md'), 'utf8')).toBe('body');
+    expect(readFileSync(join(repoRoot, '.agents', 'skills', 'a', 'SKILL.md'), 'utf8')).toBe('---\nname: a\ndescription: x\n---\nbody');
     expect(existsSync(join(repoRoot, '.claude', 'skills', 'a', 'SKILL.md'))).toBe(true);
   });
 
@@ -47,9 +47,40 @@ describe('migrateHarness', () => {
 
   it('is a no-op the second time it runs', () => {
     mkdirSync(join(repoRoot, '.claude', 'skills', 'a'), { recursive: true });
-    writeFileSync(join(repoRoot, '.claude', 'skills', 'a', 'SKILL.md'), 'body');
+    writeFileSync(join(repoRoot, '.claude', 'skills', 'a', 'SKILL.md'), '---\nname: a\ndescription: x\n---\nbody');
     migrateHarness(repoRoot, 'claude-code');
     const second = migrateHarness(repoRoot, 'claude-code');
     expect(second.output).toContain('nothing to migrate');
+  });
+
+  it('refuses to adopt an entry without a SKILL.md (clobber-risk)', () => {
+    mkdirSync(join(repoRoot, '.claude', 'skills', 'bad'), { recursive: true });
+    writeFileSync(join(repoRoot, '.claude', 'skills', 'bad', 'notaskill.md'), 'junk');
+    const result = migrateHarness(repoRoot, 'claude-code');
+    expect(result.exitCode).toBe(1);
+    expect(result.output).toContain('clobber-risk');
+    expect(result.output).toContain('bad');
+    expect(existsSync(join(repoRoot, '.agents', 'skills', 'bad'))).toBe(false);
+  });
+
+  it('refuses to adopt an entry with invalid frontmatter (clobber-risk)', () => {
+    mkdirSync(join(repoRoot, '.claude', 'skills', 'badname'), { recursive: true });
+    writeFileSync(join(repoRoot, '.claude', 'skills', 'badname', 'SKILL.md'), '---\nname: Bad_Name\ndescription: x\n---\nbody');
+    const result = migrateHarness(repoRoot, 'claude-code');
+    expect(result.exitCode).toBe(1);
+    expect(result.output).toContain('clobber-risk');
+    expect(existsSync(join(repoRoot, '.agents', 'skills', 'badname'))).toBe(false);
+  });
+
+  it('still adopts valid skills atomically after rejecting an invalid one', () => {
+    mkdirSync(join(repoRoot, '.claude', 'skills', 'good'), { recursive: true });
+    writeFileSync(join(repoRoot, '.claude', 'skills', 'good', 'SKILL.md'), '---\nname: good\ndescription: fine\n---\nbody');
+    mkdirSync(join(repoRoot, '.claude', 'skills', 'bad'), { recursive: true });
+    writeFileSync(join(repoRoot, '.claude', 'skills', 'bad', 'notaskill.md'), 'junk');
+    const result = migrateHarness(repoRoot, 'claude-code');
+    expect(result.exitCode).toBe(1);
+    expect(result.output).toContain('bad');
+    expect(existsSync(join(repoRoot, '.agents', 'skills', 'good'))).toBe(false);
+    expect(existsSync(join(repoRoot, '.agents', 'skills', 'bad'))).toBe(false);
   });
 });
