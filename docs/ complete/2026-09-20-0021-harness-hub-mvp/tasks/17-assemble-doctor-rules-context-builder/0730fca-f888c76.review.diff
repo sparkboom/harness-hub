@@ -1,0 +1,120 @@
+# Review package: 0730fca..f888c76
+
+## Commits
+f888c76 feat: assemble all 8 doctor rules + doctor context builder
+
+## Files changed
+ src/doctor/context.test.ts     | 30 ++++++++++++++++++++++++++++++
+ src/doctor/context.ts          | 14 ++++++++++++++
+ src/doctor/rules/index.test.ts | 19 +++++++++++++++++++
+ src/doctor/rules/index.ts      | 20 ++++++++++++++++++++
+ 4 files changed, 83 insertions(+)
+
+## Diff
+diff --git a/src/doctor/context.test.ts b/src/doctor/context.test.ts
+new file mode 100644
+index 0000000..4a39444
+--- /dev/null
++++ b/src/doctor/context.test.ts
+@@ -0,0 +1,30 @@
++import { describe, it, expect, beforeEach, afterEach } from 'vitest';
++import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import { buildDoctorContext } from './context';
++
++describe('buildDoctorContext', () => {
++  let repoRoot: string;
++  beforeEach(() => {
++    repoRoot = mkdtempSync(join(tmpdir(), 'hh-ctx-'));
++  });
++  afterEach(() => {
++    rmSync(repoRoot, { recursive: true, force: true });
++  });
++
++  it('defaults to an empty configuredHarnesses/pendingHarnesses when no config exists', () => {
++    const ctx = buildDoctorContext(repoRoot);
++    expect(ctx.configuredHarnesses).toEqual([]);
++    expect(ctx.pendingHarnesses).toEqual([]);
++    expect(ctx.homeDir).toBeTruthy();
++  });
++
++  it('reads configuredHarnesses from an existing config and accepts explicit pendingHarnesses/homeDir', () => {
++    writeFileSync(join(repoRoot, 'harness-hub.yaml'), 'harnesses:\n  - cursor\n');
++    const ctx = buildDoctorContext(repoRoot, ['hermes'], '/fake/home');
++    expect(ctx.configuredHarnesses).toEqual(['cursor']);
++    expect(ctx.pendingHarnesses).toEqual(['hermes']);
++    expect(ctx.homeDir).toBe('/fake/home');
++  });
++});
+diff --git a/src/doctor/context.ts b/src/doctor/context.ts
+new file mode 100644
+index 0000000..26ff9f7
+--- /dev/null
++++ b/src/doctor/context.ts
+@@ -0,0 +1,14 @@
++import { homedir } from 'node:os';
++import { loadConfig } from '../config';
++import type { HarnessId } from '../harnesses';
++import type { DoctorContext } from './types';
++
++export function buildDoctorContext(
++  repoRoot: string,
++  pendingHarnesses: HarnessId[] = [],
++  homeDir: string = homedir()
++): DoctorContext {
++  const config = loadConfig(repoRoot);
++  const configuredHarnesses = config.status === 'ok' ? config.harnesses : [];
++  return { repoRoot, homeDir, config, configuredHarnesses, pendingHarnesses };
++}
+diff --git a/src/doctor/rules/index.test.ts b/src/doctor/rules/index.test.ts
+new file mode 100644
+index 0000000..37dba41
+--- /dev/null
++++ b/src/doctor/rules/index.test.ts
+@@ -0,0 +1,19 @@
++import { describe, it, expect } from 'vitest';
++import { ALL_DOCTOR_RULES } from './index';
++
++describe('ALL_DOCTOR_RULES', () => {
++  it('registers exactly the 8 rule modules backing spec §9, each with a unique id', () => {
++    const ids = ALL_DOCTOR_RULES.map((r) => r.id);
++    expect(ids).toEqual([
++      'canon-presence',
++      'config-validity',
++      'skill-shape',
++      'skill-frontmatter',
++      'clobber-risk',
++      'skill-migration',
++      'trust-gate',
++      'generated-file-drift',
++    ]);
++    expect(new Set(ids).size).toBe(ids.length);
++  });
++});
+diff --git a/src/doctor/rules/index.ts b/src/doctor/rules/index.ts
+new file mode 100644
+index 0000000..636c70a
+--- /dev/null
++++ b/src/doctor/rules/index.ts
+@@ -0,0 +1,20 @@
++import { canonPresenceRule } from './canonPresence';
++import { configValidityRule } from './configValidity';
++import { skillShapeRule } from './skillShape';
++import { skillFrontmatterRule } from './skillFrontmatter';
++import { clobberRiskRule } from './clobberRisk';
++import { skillMigrationRule } from './skillMigration';
++import { trustGateRule } from './trustGate';
++import { generatedFileDriftRule } from './generatedFileDrift';
++import type { DoctorRule } from '../types';
++
++export const ALL_DOCTOR_RULES: DoctorRule[] = [
++  canonPresenceRule,
++  configValidityRule,
++  skillShapeRule,
++  skillFrontmatterRule,
++  clobberRiskRule,
++  skillMigrationRule,
++  trustGateRule,
++  generatedFileDriftRule,
++];

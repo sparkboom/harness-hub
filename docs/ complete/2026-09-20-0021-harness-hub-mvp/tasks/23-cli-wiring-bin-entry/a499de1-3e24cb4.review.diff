@@ -1,0 +1,180 @@
+# Review package: a499de1..3e24cb4
+
+## Commits
+3e24cb4 feat: CLI wiring (enable/disable/migrate/doctor) + bin entry
+
+## Files changed
+ src/bin.ts      | 11 ++++++++
+ src/cli.test.ts | 58 +++++++++++++++++++++++++++++++++++++++++
+ src/cli.ts      | 81 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 150 insertions(+)
+
+## Diff
+diff --git a/src/bin.ts b/src/bin.ts
+new file mode 100644
+index 0000000..9e24aa8
+--- /dev/null
++++ b/src/bin.ts
+@@ -0,0 +1,11 @@
++#!/usr/bin/env node
++// src/bin.ts
++import { main } from './cli';
++
++main(process.argv.slice(2)).then(
++  (exitCode) => process.exit(exitCode),
++  (err) => {
++    console.error(err instanceof Error ? err.message : String(err));
++    process.exit(1);
++  }
++);
+diff --git a/src/cli.test.ts b/src/cli.test.ts
+new file mode 100644
+index 0000000..ea71361
+--- /dev/null
++++ b/src/cli.test.ts
+@@ -0,0 +1,58 @@
++// src/cli.test.ts
++import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
++import { mkdtempSync, rmSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import { main } from './cli';
++
++describe('cli main()', () => {
++  let repoRoot: string;
++  let originalCwd: string;
++
++  beforeEach(() => {
++    repoRoot = mkdtempSync(join(tmpdir(), 'hh-cli-'));
++    mkdirSync(join(repoRoot, '.git'));
++    writeFileSync(join(repoRoot, 'AGENTS.md'), '# Agents\n');
++    originalCwd = process.cwd();
++    process.chdir(repoRoot);
++    vi.spyOn(console, 'log').mockImplementation(() => {});
++    vi.spyOn(console, 'error').mockImplementation(() => {});
++  });
++
++  afterEach(() => {
++    process.chdir(originalCwd);
++    rmSync(repoRoot, { recursive: true, force: true });
++    vi.restoreAllMocks();
++  });
++
++  it('doctor exits 0 for a minimal valid repo', async () => {
++    expect(await main(['doctor'])).toBe(0);
++  });
++
++  it('enable writes harness-hub.yaml for a native harness', async () => {
++    expect(await main(['enable', 'cursor'])).toBe(0);
++    expect(existsSync(join(repoRoot, 'harness-hub.yaml'))).toBe(true);
++  });
++
++  it('enable then disable claude-code round-trips cleanly', async () => {
++    expect(await main(['enable', 'claude-code'])).toBe(0);
++    expect(existsSync(join(repoRoot, 'CLAUDE.md'))).toBe(true);
++    expect(await main(['disable', 'claude-code'])).toBe(0);
++    expect(existsSync(join(repoRoot, 'CLAUDE.md'))).toBe(false);
++  });
++
++  it('rejects an unrecognized harness id', async () => {
++    expect(await main(['enable', 'not-a-harness'])).toBe(1);
++  });
++
++  it('migrate reports nothing to migrate for a clean claude-code repo', async () => {
++    expect(await main(['migrate', 'claude-code'])).toBe(0);
++  });
++
++  it('fails clearly outside a git repo', async () => {
++    const nonRepo = mkdtempSync(join(tmpdir(), 'hh-nonrepo-'));
++    process.chdir(nonRepo);
++    expect(await main(['doctor'])).toBe(1);
++    rmSync(nonRepo, { recursive: true, force: true });
++  });
++});
+diff --git a/src/cli.ts b/src/cli.ts
+new file mode 100644
+index 0000000..a23f33a
+--- /dev/null
++++ b/src/cli.ts
+@@ -0,0 +1,81 @@
++// src/cli.ts
++import { Command } from 'commander';
++import { findRepoRoot } from './repo';
++import { isHarnessId, type HarnessId } from './harnesses';
++import { enableHarnesses } from './commands/enable';
++import { disableHarnesses } from './commands/disable';
++import { migrateHarness } from './commands/migrate';
++import { runDoctorCommand } from './commands/doctor';
++import { getPackageVersion } from './version';
++
++function parseHarnessIds(values: string[]): HarnessId[] {
++  const invalid = values.filter((v) => !isHarnessId(v));
++  if (invalid.length > 0) {
++    throw new Error(`Unrecognized harness id(s): ${invalid.join(', ')}`);
++  }
++  return values as HarnessId[];
++}
++
++export async function main(argv: string[]): Promise<number> {
++  let exitCode = 0;
++  const program = new Command();
++  program.name('harness-hub').version(getPackageVersion()).exitOverride();
++
++  program
++    .command('enable <harnesses...>')
++    .option('--force', 'overwrite clobber-risk findings (CLAUDE.md, .claude/skills symlink target)')
++    .action((harnesses: string[], opts: { force?: boolean }) => {
++      const repoRoot = findRepoRoot(process.cwd());
++      const harnessIds = parseHarnessIds(harnesses);
++      const result = enableHarnesses(repoRoot, harnessIds, { force: opts.force });
++      for (const r of result.results) {
++        if (r.status === 'blocked') {
++          console.error(`harness-hub enable ${r.harnessId}: blocked`);
++          for (const f of r.blockingFindings) {
++            console.error(`  [${f.severity.toUpperCase()}] ${f.message}\n  \u2192 ${f.remediation}`);
++          }
++        } else {
++          console.log(`harness-hub enable ${r.harnessId}: ${r.status}`);
++        }
++      }
++      exitCode = result.exitCode;
++    });
++
++  program.command('disable <harnesses...>').action((harnesses: string[]) => {
++    const repoRoot = findRepoRoot(process.cwd());
++    const harnessIds = parseHarnessIds(harnesses);
++    const result = disableHarnesses(repoRoot, harnessIds);
++    console.log(result.output);
++    exitCode = result.exitCode;
++  });
++
++  program.command('migrate <harness>').action((harness: string) => {
++    const repoRoot = findRepoRoot(process.cwd());
++    const [harnessId] = parseHarnessIds([harness]);
++    const result = migrateHarness(repoRoot, harnessId);
++    console.log(result.output);
++    exitCode = result.exitCode;
++  });
++
++  program.command('doctor').action(() => {
++    const repoRoot = findRepoRoot(process.cwd());
++    const result = runDoctorCommand(repoRoot);
++    console.log(result.output);
++    exitCode = result.exitCode;
++  });
++
++  try {
++    await program.parseAsync(argv, { from: 'user' });
++  } catch (err) {
++    if (err && typeof err === 'object' && 'code' in err) {
++      const code = (err as { code: string }).code;
++      if (code === 'commander.helpDisplayed' || code === 'commander.version') {
++        return 0;
++      }
++    }
++    if (err instanceof Error) console.error(err.message);
++    return exitCode || 1;
++  }
++
++  return exitCode;
++}

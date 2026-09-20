@@ -1,0 +1,126 @@
+# Review package: 95b4334..d432838
+
+## Commits
+d432838 feat: generic migrate-symlink wiring for AGENTS.md + skills
+
+## Files changed
+ src/wiring/migrateSymlink.test.ts | 55 +++++++++++++++++++++++++++++++++++++++
+ src/wiring/migrateSymlink.ts      | 48 ++++++++++++++++++++++++++++++++++
+ 2 files changed, 103 insertions(+)
+
+## Diff
+diff --git a/src/wiring/migrateSymlink.test.ts b/src/wiring/migrateSymlink.test.ts
+new file mode 100644
+index 0000000..2355543
+--- /dev/null
++++ b/src/wiring/migrateSymlink.test.ts
+@@ -0,0 +1,55 @@
++// src/wiring/migrateSymlink.test.ts
++import { describe, it, expect, beforeEach, afterEach } from 'vitest';
++import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, lstatSync, readlinkSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import { wireMigrateSymlinkHarness } from './migrateSymlink';
++import { getHarnessEntry } from '../registry';
++
++describe('wireMigrateSymlinkHarness', () => {
++  let repoRoot: string;
++  beforeEach(() => {
++    repoRoot = mkdtempSync(join(tmpdir(), 'hh-wiring-'));
++    writeFileSync(join(repoRoot, 'AGENTS.md'), '# Agents\n');
++  });
++  afterEach(() => {
++    rmSync(repoRoot, { recursive: true, force: true });
++  });
++
++  it('creates both symlinks from a clean repo', () => {
++    wireMigrateSymlinkHarness(repoRoot, getHarnessEntry('claude-code'));
++
++    expect(readlinkSync(join(repoRoot, 'CLAUDE.md'))).toBe('AGENTS.md');
++    expect(readlinkSync(join(repoRoot, '.claude', 'skills'))).toBe(join('..', '.agents', 'skills'));
++  });
++
++  it('is idempotent when the symlinks already exist', () => {
++    wireMigrateSymlinkHarness(repoRoot, getHarnessEntry('claude-code'));
++    wireMigrateSymlinkHarness(repoRoot, getHarnessEntry('claude-code'));
++    expect(lstatSync(join(repoRoot, 'CLAUDE.md')).isSymbolicLink()).toBe(true);
++  });
++
++  it('replaces a real .claude/skills directory that only contains already-migrated content', () => {
++    mkdirSync(join(repoRoot, '.agents', 'skills', 'a'), { recursive: true });
++    writeFileSync(join(repoRoot, '.agents', 'skills', 'a', 'SKILL.md'), 'body');
++    mkdirSync(join(repoRoot, '.claude', 'skills', 'a'), { recursive: true });
++    writeFileSync(join(repoRoot, '.claude', 'skills', 'a', 'SKILL.md'), 'body');
++
++    wireMigrateSymlinkHarness(repoRoot, getHarnessEntry('claude-code'));
++
++    expect(lstatSync(join(repoRoot, '.claude', 'skills')).isSymbolicLink()).toBe(true);
++  });
++
++  it('replaces a foreign CLAUDE.md (the --force path)', () => {
++    writeFileSync(join(repoRoot, 'CLAUDE.md'), '# hand-written\n');
++    wireMigrateSymlinkHarness(repoRoot, getHarnessEntry('claude-code'));
++    expect(readlinkSync(join(repoRoot, 'CLAUDE.md'))).toBe('AGENTS.md');
++  });
++
++  it('adds both paths to .gitignore', () => {
++    wireMigrateSymlinkHarness(repoRoot, getHarnessEntry('claude-code'));
++    const gitignore = readFileSync(join(repoRoot, '.gitignore'), 'utf8');
++    expect(gitignore).toContain('CLAUDE.md');
++    expect(gitignore).toContain('.claude/skills');
++  });
++});
+diff --git a/src/wiring/migrateSymlink.ts b/src/wiring/migrateSymlink.ts
+new file mode 100644
+index 0000000..305db39
+--- /dev/null
++++ b/src/wiring/migrateSymlink.ts
+@@ -0,0 +1,48 @@
++// src/wiring/migrateSymlink.ts
++import { lstatSync, mkdirSync, rmSync, symlinkSync } from 'node:fs';
++import { dirname, join } from 'node:path';
++import { ensureGitignoreEntries, isSymlinkTo, relativeSymlinkTarget } from '../fsutil';
++import { skillsRootDir, AGENTS_MD_FILENAME } from '../canon';
++import type { HarnessEntry } from '../registry';
++
++/** True if `linkPath` is present as a symlink, dangling or not (unlike existsSync, which follows links). */
++function pathPresent(linkPath: string): boolean {
++  try {
++    lstatSync(linkPath);
++    return true;
++  } catch {
++    return false;
++  }
++}
++
++function ensureSymlink(repoRoot: string, linkRelPath: string, targetAbsPath: string): void {
++  const linkAbsPath = join(repoRoot, linkRelPath);
++  const target = relativeSymlinkTarget(repoRoot, linkRelPath, targetAbsPath);
++  if (pathPresent(linkAbsPath) && !isSymlinkTo(linkAbsPath, target)) {
++    rmSync(linkAbsPath, { recursive: true, force: true });
++  }
++  if (!pathPresent(linkAbsPath)) {
++    mkdirSync(dirname(linkAbsPath), { recursive: true });
++    symlinkSync(target, linkAbsPath);
++  }
++}
++
++/**
++ * Wires a harness's AGENTS.md symlink and/or skills symlink per its registry
++ * entry. Assumes doctor's blocking checks (clobber-risk, unmigrated-skills,
++ * skill-migration-collision) already passed for this harness.
++ */
++export function wireMigrateSymlinkHarness(repoRoot: string, entry: HarnessEntry): void {
++  if (entry.skills.mode === 'migrate-symlink' && entry.skills.symlinkPath) {
++    ensureSymlink(repoRoot, entry.skills.symlinkPath, skillsRootDir(repoRoot));
++  }
++  if (entry.agentsDoc.mode === 'symlink' && entry.agentsDoc.symlinkPath) {
++    ensureSymlink(repoRoot, entry.agentsDoc.symlinkPath, join(repoRoot, AGENTS_MD_FILENAME));
++  }
++  const gitignoreEntries = [entry.agentsDoc.symlinkPath, entry.skills.symlinkPath].filter(
++    (p): p is string => Boolean(p)
++  );
++  if (gitignoreEntries.length > 0) {
++    ensureGitignoreEntries(repoRoot, gitignoreEntries);
++  }
++}

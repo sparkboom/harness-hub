@@ -1,0 +1,176 @@
+# Review package: 333ff60..HEAD
+
+## Commits
+3e763cb feat: pluggable doctor-rule framework (DoctorRule, runDoctor)
+
+## Files changed
+ src/doctor/run.test.ts | 95 ++++++++++++++++++++++++++++++++++++++++++++++++++
+ src/doctor/run.ts      | 20 +++++++++++
+ src/doctor/types.ts    | 31 ++++++++++++++++
+ 3 files changed, 146 insertions(+)
+
+## Diff
+diff --git a/src/doctor/run.test.ts b/src/doctor/run.test.ts
+new file mode 100644
+index 0000000..6d6057d
+--- /dev/null
++++ b/src/doctor/run.test.ts
+@@ -0,0 +1,95 @@
++import { describe, it, expect } from 'vitest';
++import { runDoctor, hasBlockingErrors, findingsForHarness } from './run';
++import type { DoctorContext, DoctorRule, Finding } from './types';
++
++function makeCtx(overrides: Partial<DoctorContext> = {}): DoctorContext {
++  return {
++    repoRoot: '/repo',
++    homeDir: '/home/user',
++    config: { status: 'absent' },
++    configuredHarnesses: [],
++    pendingHarnesses: [],
++    ...overrides,
++  };
++}
++
++describe('runDoctor', () => {
++  it('only runs rules whose applies() returns true', () => {
++    const ranRuleIds: string[] = [];
++    const rules: DoctorRule[] = [
++      {
++        id: 'always',
++        applies: () => true,
++        check: () => {
++          ranRuleIds.push('always');
++          return [];
++        },
++      },
++      {
++        id: 'never',
++        applies: () => false,
++        check: () => {
++          ranRuleIds.push('never');
++          return [];
++        },
++      },
++    ];
++    runDoctor(makeCtx(), rules);
++    expect(ranRuleIds).toEqual(['always']);
++  });
++
++  it('aggregates findings from every applicable rule', () => {
++    const finding: Finding = { ruleId: 'a', severity: 'error', message: 'm', remediation: 'r', forceable: false };
++    const rules: DoctorRule[] = [
++      { id: 'a', applies: () => true, check: () => [finding] },
++      { id: 'b', applies: () => true, check: () => [] },
++    ];
++    expect(runDoctor(makeCtx(), rules)).toEqual([finding]);
++  });
++});
++
++describe('hasBlockingErrors', () => {
++  it('is true when any finding is an error', () => {
++    expect(
++      hasBlockingErrors([{ ruleId: 'a', severity: 'error', message: '', remediation: '', forceable: false }])
++    ).toBe(true);
++  });
++
++  it('is false when all findings are warnings', () => {
++    expect(
++      hasBlockingErrors([{ ruleId: 'a', severity: 'warning', message: '', remediation: '', forceable: false }])
++    ).toBe(false);
++  });
++
++  it('is false for an empty list', () => {
++    expect(hasBlockingErrors([])).toBe(false);
++  });
++});
++
++describe('findingsForHarness', () => {
++  const canonWide: Finding = { ruleId: 'canon', severity: 'error', message: '', remediation: '', forceable: false };
++  const claudeOnly: Finding = {
++    ruleId: 'claude',
++    severity: 'error',
++    message: '',
++    remediation: '',
++    forceable: false,
++    harnessId: 'claude-code',
++  };
++  const hermesOnly: Finding = {
++    ruleId: 'hermes',
++    severity: 'error',
++    message: '',
++    remediation: '',
++    forceable: false,
++    harnessId: 'hermes',
++  };
++
++  it('includes canon-wide findings for every harness', () => {
++    expect(findingsForHarness([canonWide, claudeOnly, hermesOnly], 'cursor')).toEqual([canonWide]);
++  });
++
++  it('includes a harness-scoped finding only for its own harness', () => {
++    expect(findingsForHarness([canonWide, claudeOnly, hermesOnly], 'claude-code')).toEqual([canonWide, claudeOnly]);
++  });
++});
+diff --git a/src/doctor/run.ts b/src/doctor/run.ts
+new file mode 100644
+index 0000000..0e95579
+--- /dev/null
++++ b/src/doctor/run.ts
+@@ -0,0 +1,20 @@
++import type { DoctorContext, DoctorRule, Finding } from './types';
++
++export function runDoctor(ctx: DoctorContext, rules: DoctorRule[]): Finding[] {
++  const findings: Finding[] = [];
++  for (const rule of rules) {
++    if (rule.applies(ctx)) {
++      findings.push(...rule.check(ctx));
++    }
++  }
++  return findings;
++}
++
++export function hasBlockingErrors(findings: Finding[]): boolean {
++  return findings.some((f) => f.severity === 'error');
++}
++
++/** Findings relevant to a specific harness: harness-scoped findings for it, plus every canon-wide finding. */
++export function findingsForHarness(findings: Finding[], harnessId: string): Finding[] {
++  return findings.filter((f) => f.harnessId === undefined || f.harnessId === harnessId);
++}
+diff --git a/src/doctor/types.ts b/src/doctor/types.ts
+new file mode 100644
+index 0000000..1854903
+--- /dev/null
++++ b/src/doctor/types.ts
+@@ -0,0 +1,31 @@
++import type { HarnessId } from '../harnesses';
++import type { ConfigLoadResult } from '../config';
++
++export type Severity = 'error' | 'warning';
++
++export interface Finding {
++  ruleId: string;
++  severity: Severity;
++  message: string;
++  remediation: string;
++  /** Set when this finding is specific to one harness; undefined for canon-wide findings. */
++  harnessId?: HarnessId;
++  /** True only for findings `enable --force` may override (clobber risk, MVP). */
++  forceable: boolean;
++}
++
++export interface DoctorContext {
++  repoRoot: string;
++  homeDir: string;
++  config: ConfigLoadResult;
++  /** Harnesses already configured ("ok" config's harnesses; [] if config is absent/invalid). */
++  configuredHarnesses: HarnessId[];
++  /** Harnesses `enable` is currently trying to wire, not yet in configuredHarnesses (empty for a plain `doctor` run). */
++  pendingHarnesses: HarnessId[];
++}
++
++export interface DoctorRule {
++  id: string;
++  applies(ctx: DoctorContext): boolean;
++  check(ctx: DoctorContext): Finding[];
++}

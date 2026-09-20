@@ -1,0 +1,184 @@
+# Review package: 3e763cb..HEAD
+
+## Commits
+fb6668c feat: canon-presence and config-validity doctor rules
+
+## Files changed
+ src/doctor/rules/canonPresence.test.ts  | 31 +++++++++++++++++++
+ src/doctor/rules/canonPresence.ts       | 19 ++++++++++++
+ src/doctor/rules/configValidity.test.ts | 43 ++++++++++++++++++++++++++
+ src/doctor/rules/configValidity.ts      | 54 +++++++++++++++++++++++++++++++++
+ 4 files changed, 147 insertions(+)
+
+## Diff
+diff --git a/src/doctor/rules/canonPresence.test.ts b/src/doctor/rules/canonPresence.test.ts
+new file mode 100644
+index 0000000..c5e3067
+--- /dev/null
++++ b/src/doctor/rules/canonPresence.test.ts
+@@ -0,0 +1,31 @@
++import { describe, it, expect, beforeEach, afterEach } from 'vitest';
++import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import { canonPresenceRule } from './canonPresence';
++import type { DoctorContext } from '../types';
++
++function makeCtx(repoRoot: string): DoctorContext {
++  return { repoRoot, homeDir: '/home/user', config: { status: 'absent' }, configuredHarnesses: [], pendingHarnesses: [] };
++}
++
++describe('canonPresenceRule', () => {
++  let repoRoot: string;
++  beforeEach(() => {
++    repoRoot = mkdtempSync(join(tmpdir(), 'hh-canonpresence-'));
++  });
++  afterEach(() => {
++    rmSync(repoRoot, { recursive: true, force: true });
++  });
++
++  it('reports an error when AGENTS.md is missing', () => {
++    const findings = canonPresenceRule.check(makeCtx(repoRoot));
++    expect(findings).toHaveLength(1);
++    expect(findings[0].severity).toBe('error');
++  });
++
++  it('reports nothing when AGENTS.md exists', () => {
++    writeFileSync(join(repoRoot, 'AGENTS.md'), '# Agents\n');
++    expect(canonPresenceRule.check(makeCtx(repoRoot))).toEqual([]);
++  });
++});
+diff --git a/src/doctor/rules/canonPresence.ts b/src/doctor/rules/canonPresence.ts
+new file mode 100644
+index 0000000..29360a1
+--- /dev/null
++++ b/src/doctor/rules/canonPresence.ts
+@@ -0,0 +1,19 @@
++import { hasAgentsMd } from '../../canon';
++import type { DoctorRule } from '../types';
++
++export const canonPresenceRule: DoctorRule = {
++  id: 'canon-presence',
++  applies: () => true,
++  check: (ctx) => {
++    if (hasAgentsMd(ctx.repoRoot)) return [];
++    return [
++      {
++        ruleId: 'canon-presence',
++        severity: 'error',
++        message: 'AGENTS.md is missing at the repo root.',
++        remediation: 'Create AGENTS.md at the repo root — harness-hub never scaffolds it for you.',
++        forceable: false,
++      },
++    ];
++  },
++};
+diff --git a/src/doctor/rules/configValidity.test.ts b/src/doctor/rules/configValidity.test.ts
+new file mode 100644
+index 0000000..8b911a6
+--- /dev/null
++++ b/src/doctor/rules/configValidity.test.ts
+@@ -0,0 +1,43 @@
++import { describe, it, expect } from 'vitest';
++import { configValidityRule } from './configValidity';
++import type { DoctorContext } from '../types';
++
++function makeCtx(config: DoctorContext['config']): DoctorContext {
++  return { repoRoot: '/repo', homeDir: '/home/user', config, configuredHarnesses: [], pendingHarnesses: [] };
++}
++
++describe('configValidityRule', () => {
++  it('passes when config is absent', () => {
++    expect(configValidityRule.check(makeCtx({ status: 'absent' }))).toEqual([]);
++  });
++
++  it('passes for a valid config with no unknown ids', () => {
++    const ctx = makeCtx({ status: 'ok', format: 'yaml', path: '/repo/harness-hub.yaml', harnesses: ['cursor'], unknownIds: [] });
++    expect(configValidityRule.check(ctx)).toEqual([]);
++  });
++
++  it('flags unknown harness ids in an otherwise-valid config', () => {
++    const ctx = makeCtx({ status: 'ok', format: 'yaml', path: '/repo/harness-hub.yaml', harnesses: [], unknownIds: ['bogus'] });
++    expect(configValidityRule.check(ctx)[0].severity).toBe('error');
++  });
++
++  it('flags ambiguous config (both files present)', () => {
++    const ctx = makeCtx({ status: 'ambiguous', yamlPath: '/repo/harness-hub.yaml', jsonPath: '/repo/harness-hub.json' });
++    expect(configValidityRule.check(ctx)[0].severity).toBe('error');
++  });
++
++  it('flags a parse error', () => {
++    const ctx = makeCtx({ status: 'parse-error', format: 'yaml', path: '/repo/harness-hub.yaml', error: 'bad yaml' });
++    expect(configValidityRule.check(ctx)[0].message).toContain('bad yaml');
++  });
++
++  it('flags an invalid shape', () => {
++    const ctx = makeCtx({
++      status: 'invalid-shape',
++      format: 'yaml',
++      path: '/repo/harness-hub.yaml',
++      reason: '"harnesses" must be an array',
++    });
++    expect(configValidityRule.check(ctx)[0].severity).toBe('error');
++  });
++});
+diff --git a/src/doctor/rules/configValidity.ts b/src/doctor/rules/configValidity.ts
+new file mode 100644
+index 0000000..b4fc178
+--- /dev/null
++++ b/src/doctor/rules/configValidity.ts
+@@ -0,0 +1,54 @@
++import type { DoctorRule } from '../types';
++
++export const configValidityRule: DoctorRule = {
++  id: 'config-validity',
++  applies: () => true,
++  check: (ctx) => {
++    const { config } = ctx;
++    switch (config.status) {
++      case 'absent':
++        return [];
++      case 'ok':
++        if (config.unknownIds.length === 0) return [];
++        return [
++          {
++            ruleId: 'config-validity',
++            severity: 'error',
++            message: `${config.path} lists unrecognized harness id(s): ${config.unknownIds.join(', ')}`,
++            remediation: 'Remove or fix the unrecognized id(s) in the "harnesses" list.',
++            forceable: false,
++          },
++        ];
++      case 'ambiguous':
++        return [
++          {
++            ruleId: 'config-validity',
++            severity: 'error',
++            message: `Both ${config.yamlPath} and ${config.jsonPath} exist.`,
++            remediation: 'Keep exactly one of harness-hub.yaml / harness-hub.json and delete the other.',
++            forceable: false,
++          },
++        ];
++      case 'parse-error':
++        return [
++          {
++            ruleId: 'config-validity',
++            severity: 'error',
++            message: `${config.path} could not be parsed: ${config.error}`,
++            remediation: `Fix the syntax error in ${config.path}.`,
++            forceable: false,
++          },
++        ];
++      case 'invalid-shape':
++        return [
++          {
++            ruleId: 'config-validity',
++            severity: 'error',
++            message: `${config.path} is invalid: ${config.reason}`,
++            remediation: `Fix ${config.path} so it has a top-level "harnesses" array.`,
++            forceable: false,
++          },
++        ];
++    }
++  },
++};

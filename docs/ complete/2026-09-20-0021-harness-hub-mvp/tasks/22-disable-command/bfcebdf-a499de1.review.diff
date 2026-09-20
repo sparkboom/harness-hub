@@ -1,0 +1,116 @@
+# Review package: bfcebdf..a499de1
+
+## Commits
+a499de1 feat: disable command
+
+## Files changed
+ src/commands/disable.test.ts | 51 ++++++++++++++++++++++++++++++++++++++++++++
+ src/commands/disable.ts      | 42 ++++++++++++++++++++++++++++++++++++
+ 2 files changed, 93 insertions(+)
+
+## Diff
+diff --git a/src/commands/disable.test.ts b/src/commands/disable.test.ts
+new file mode 100644
+index 0000000..3691a07
+--- /dev/null
++++ b/src/commands/disable.test.ts
+@@ -0,0 +1,51 @@
++// src/commands/disable.test.ts
++import { describe, it, expect, beforeEach, afterEach } from 'vitest';
++import { mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync, existsSync, readFileSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import { parse as parseYaml } from 'yaml';
++import { disableHarnesses } from './disable';
++import { saveConfig } from '../config';
++
++describe('disableHarnesses', () => {
++  let repoRoot: string;
++  beforeEach(() => {
++    repoRoot = mkdtempSync(join(tmpdir(), 'hh-disable-'));
++  });
++  afterEach(() => {
++    rmSync(repoRoot, { recursive: true, force: true });
++  });
++
++  it('removes the claude-code symlinks but keeps canon skills intact', () => {
++    writeFileSync(join(repoRoot, 'AGENTS.md'), '# Agents\n');
++    mkdirSync(join(repoRoot, '.agents', 'skills', 'a'), { recursive: true });
++    writeFileSync(join(repoRoot, '.agents', 'skills', 'a', 'SKILL.md'), 'body');
++    symlinkSync('AGENTS.md', join(repoRoot, 'CLAUDE.md'));
++    mkdirSync(join(repoRoot, '.claude'), { recursive: true });
++    symlinkSync(join('..', '.agents', 'skills'), join(repoRoot, '.claude', 'skills'));
++    saveConfig(repoRoot, ['claude-code']);
++
++    disableHarnesses(repoRoot, ['claude-code']);
++
++    expect(existsSync(join(repoRoot, 'CLAUDE.md'))).toBe(false);
++    expect(existsSync(join(repoRoot, '.claude', 'skills'))).toBe(false);
++    expect(readFileSync(join(repoRoot, '.agents', 'skills', 'a', 'SKILL.md'), 'utf8')).toBe('body');
++  });
++
++  it('removes only the requested harness id from the config', () => {
++    saveConfig(repoRoot, ['claude-code', 'cursor']);
++    disableHarnesses(repoRoot, ['claude-code']);
++    const harnesses = (parseYaml(readFileSync(join(repoRoot, 'harness-hub.yaml'), 'utf8')) as { harnesses: string[] })
++      .harnesses;
++    expect(harnesses).toEqual(['cursor']);
++  });
++
++  it('is a no-op for a harness that was never enabled', () => {
++    saveConfig(repoRoot, ['cursor']);
++    const result = disableHarnesses(repoRoot, ['hermes']);
++    expect(result.exitCode).toBe(0);
++    const harnesses = (parseYaml(readFileSync(join(repoRoot, 'harness-hub.yaml'), 'utf8')) as { harnesses: string[] })
++      .harnesses;
++    expect(harnesses).toEqual(['cursor']);
++  });
++});
+diff --git a/src/commands/disable.ts b/src/commands/disable.ts
+new file mode 100644
+index 0000000..02ed925
+--- /dev/null
++++ b/src/commands/disable.ts
+@@ -0,0 +1,42 @@
++// src/commands/disable.ts
++import { existsSync, lstatSync, rmSync } from 'node:fs';
++import { join } from 'node:path';
++import { loadConfig, saveConfig } from '../config';
++import { getHarnessEntry } from '../registry';
++import type { HarnessId } from '../harnesses';
++
++export interface DisableCommandResult {
++  output: string;
++  exitCode: number;
++}
++
++function removeIfSymlink(path: string): void {
++  if (existsSync(path) && lstatSync(path).isSymbolicLink()) {
++    rmSync(path, { force: true });
++  }
++}
++
++export function disableHarnesses(repoRoot: string, harnessIds: HarnessId[]): DisableCommandResult {
++  const config = loadConfig(repoRoot);
++  const currentlyEnabled = config.status === 'ok' ? config.harnesses : [];
++  const remaining = currentlyEnabled.filter((id) => !harnessIds.includes(id));
++
++  for (const harnessId of harnessIds) {
++    const entry = getHarnessEntry(harnessId);
++    if (entry.agentsDoc.mode === 'symlink' && entry.agentsDoc.symlinkPath) {
++      removeIfSymlink(join(repoRoot, entry.agentsDoc.symlinkPath));
++    }
++    if (entry.skills.mode === 'migrate-symlink' && entry.skills.symlinkPath) {
++      removeIfSymlink(join(repoRoot, entry.skills.symlinkPath));
++    }
++  }
++
++  if (remaining.length !== currentlyEnabled.length) {
++    saveConfig(repoRoot, remaining);
++  }
++
++  return {
++    output: `harness-hub disable: ${harnessIds.join(', ')} disabled.`,
++    exitCode: 0,
++  };
++}
