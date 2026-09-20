@@ -1,44 +1,47 @@
 import type { HarnessId } from '../harnesses';
 import type { HarnessEntry } from './types';
+import { loadVersionsManifest } from './versions';
+
+const versions = loadVersionsManifest();
 
 export const HARNESS_REGISTRY: Record<HarnessId, HarnessEntry> = {
   'claude-code': {
     id: 'claude-code',
-    displayName: 'Claude Code',
-    verifiedVersion: 'unpinned', // opaque native binary — not version-pinned in harness-versions.insight.md
-    verifiedDate: '2026-09-20',
+    displayName: versions['claude-code'].displayName,
+    verifiedVersion: versions['claude-code'].version,
+    verifiedDate: versions['claude-code'].verifiedDate,
     agentsDoc: { mode: 'symlink', symlinkPath: 'CLAUDE.md' },
     skills: { mode: 'migrate-symlink', symlinkPath: '.claude/skills' },
   },
   cursor: {
     id: 'cursor',
-    displayName: 'Cursor',
-    verifiedVersion: '3.x',
-    verifiedDate: '2026-09-10',
+    displayName: versions.cursor.displayName,
+    verifiedVersion: versions.cursor.version,
+    verifiedDate: versions.cursor.verifiedDate,
     agentsDoc: { mode: 'native' },
     skills: { mode: 'native' },
   },
   opencode: {
     id: 'opencode',
-    displayName: 'OpenCode',
-    verifiedVersion: '1.18.31',
-    verifiedDate: '2026-09-14',
+    displayName: versions.opencode.displayName,
+    verifiedVersion: versions.opencode.version,
+    verifiedDate: versions.opencode.verifiedDate,
     agentsDoc: { mode: 'native' },
     skills: { mode: 'native' },
   },
   codex: {
     id: 'codex',
-    displayName: 'Codex',
-    verifiedVersion: '0.153.2',
-    verifiedDate: '2026-09-03',
+    displayName: versions.codex.displayName,
+    verifiedVersion: versions.codex.version,
+    verifiedDate: versions.codex.verifiedDate,
     agentsDoc: { mode: 'native' },
     skills: { mode: 'native' },
   },
   hermes: {
     id: 'hermes',
-    displayName: 'Hermes',
-    verifiedVersion: '0.21.2',
-    verifiedDate: '2026-09-11',
+    displayName: versions.hermes.displayName,
+    verifiedVersion: versions.hermes.version,
+    verifiedDate: versions.hermes.verifiedDate,
     agentsDoc: { mode: 'native' },
     skills: {
       mode: 'native',
@@ -51,17 +54,17 @@ export const HARNESS_REGISTRY: Record<HarnessId, HarnessEntry> = {
   },
   pi: {
     id: 'pi',
-    displayName: 'Pi',
-    verifiedVersion: '0.85.0',
-    verifiedDate: '2026-09-04',
+    displayName: versions.pi.displayName,
+    verifiedVersion: versions.pi.version,
+    verifiedDate: versions.pi.verifiedDate,
     agentsDoc: { mode: 'native' },
     skills: { mode: 'native' },
   },
   deepseek: {
     id: 'deepseek',
-    displayName: 'DeepSeek Harness',
-    verifiedVersion: '0.1.5-rc.1',
-    verifiedDate: '2026-09-10',
+    displayName: versions.deepseek.displayName,
+    verifiedVersion: versions.deepseek.version,
+    verifiedDate: versions.deepseek.verifiedDate,
     agentsDoc: { mode: 'native' },
     skills: { mode: 'native' },
   },

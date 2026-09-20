@@ -1,0 +1,44 @@
+{
+  "claude-code": {
+    "displayName": "Claude Code",
+    "version": "2.1.272",
+    "verifiedDate": "2026-09-15",
+    "install": { "method": "npm", "package": "@anthropic-ai/claude-code" }
+  },
+  "cursor": {
+    "displayName": "Cursor",
+    "version": "3.x",
+    "verifiedDate": "2026-09-10",
+    "install": { "method": "fhs-wrapper", "url": "https://cursor.com/install" }
+  },
+  "opencode": {
+    "displayName": "OpenCode",
+    "version": "1.18.31",
+    "verifiedDate": "2026-09-14",
+    "install": { "method": "npm", "package": "opencode-ai" }
+  },
+  "codex": {
+    "displayName": "Codex",
+    "version": "0.153.2",
+    "verifiedDate": "2026-09-03",
+    "install": { "method": "npm", "package": "@openai/codex" }
+  },
+  "hermes": {
+    "displayName": "Hermes",
+    "version": "0.21.2",
+    "verifiedDate": "2026-09-11",
+    "install": { "method": "npm", "package": "hermes-agent" }
+  },
+  "pi": {
+    "displayName": "Pi",
+    "version": "0.85.0",
+    "verifiedDate": "2026-09-04",
+    "install": { "method": "npm", "package": "@mariozechner/pi-coding-agent" }
+  },
+  "deepseek": {
+    "displayName": "DeepSeek Harness",
+    "version": "0.1.5-rc.1",
+    "verifiedDate": "2026-09-10",
+    "install": { "method": "npm", "package": "@deepseek-ai/dsh" }
+  }
+}
