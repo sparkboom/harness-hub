@@ -6,6 +6,8 @@ import { enableHarnesses } from './commands/enable';
 import { disableHarnesses } from './commands/disable';
 import { migrateHarness } from './commands/migrate';
 import { runDoctorCommand } from './commands/doctor';
+import { formatList } from './commands/list';
+import { infoHarness } from './commands/info';
 import { getPackageVersion } from './version';
 
 function parseHarnessIds(values: string[]): HarnessId[] {
@@ -60,6 +62,16 @@ export async function main(argv: string[]): Promise<number> {
   program.command('doctor').action(() => {
     const repoRoot = findRepoRoot(process.cwd());
     const result = runDoctorCommand(repoRoot);
+    console.log(result.output);
+    exitCode = result.exitCode;
+  });
+
+  program.command('list').action(() => {
+    console.log(formatList());
+  });
+
+  program.command('info <harness>').action((harness: string) => {
+    const result = infoHarness(harness);
     console.log(result.output);
     exitCode = result.exitCode;
   });
