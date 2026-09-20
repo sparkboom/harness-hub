@@ -6,7 +6,7 @@ function pad(value: string, width: number): string {
 }
 
 export function formatList(): string {
-  const rows = [...ALL_HARNESS_IDS].map((id) => {
+  const rows = [...ALL_HARNESS_IDS].sort().map((id) => {
     const e = getHarnessEntry(id);
     const skills = e.skills.mode === 'migrate-symlink' ? 'migrate-symlink' : e.skills.mode;
     return [

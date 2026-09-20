@@ -15,7 +15,9 @@ describe('formatList', () => {
   });
 
   it('is sorted by harness id', () => {
-    const ids = ALL_HARNESS_IDS.map((id) => formatList().indexOf(id));
-    expect([...ids].sort((a, b) => a - b)).toEqual(ids);
+    const out = formatList();
+    const expected = [...ALL_HARNESS_IDS].sort();
+    const positions = expected.map((id) => out.indexOf(id));
+    expect([...positions].sort((a, b) => a - b)).toEqual(positions);
   });
 });
