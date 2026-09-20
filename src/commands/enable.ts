@@ -46,6 +46,20 @@ export function enableHarnesses(
 
   for (const harnessId of harnessIds) {
     if (alreadyEnabled.includes(harnessId)) {
+      const entry = getHarnessEntry(harnessId);
+      const harnessFindings = allFindings.filter((f) => f.harnessId === harnessId);
+      const blocking = harnessFindings.filter((f) => f.severity === 'error' && (!f.forceable || !options.force));
+      if (blocking.length > 0) {
+        results.push({ harnessId, status: 'blocked', blockingFindings: blocking });
+        continue;
+      }
+      // Spec §8: re-running enable refreshes the wiring. Doctor's drift rule
+      // covers already-configured harnesses, so repair the symlinks idempotently
+      // when it reports drift (a blocking guard above keeps foreign files safe).
+      const drifted = harnessFindings.some((f) => f.ruleId === 'generated-file-drift' && f.severity === 'warning');
+      if (drifted) {
+        wireMigrateSymlinkHarness(repoRoot, entry);
+      }
       results.push({ harnessId, status: 'already-enabled', blockingFindings: [] });
       continue;
     }

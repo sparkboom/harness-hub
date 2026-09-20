@@ -136,4 +136,34 @@ describe('enableHarnesses', () => {
     expect(result.results.find((r) => r.harnessId === 'claude-code')?.status).toBe('blocked');
     expect(readConfiguredHarnesses(repoRoot)).toEqual(['cursor']);
   });
+
+  it('repairs drifted symlinks when re-enabling an already-enabled harness', () => {
+    enableHarnesses(repoRoot, ['claude-code']);
+    rmSync(join(repoRoot, 'CLAUDE.md'));
+    const result = enableHarnesses(repoRoot, ['claude-code']);
+    expect(result.exitCode).toBe(0);
+    expect(result.results[0].status).toBe('already-enabled');
+    expect(lstatSync(join(repoRoot, 'CLAUDE.md')).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(join(repoRoot, 'CLAUDE.md'))).toBe('AGENTS.md');
+  });
+
+  it('does not clobber a foreign file on drift-repair without --force', () => {
+    enableHarnesses(repoRoot, ['claude-code']);
+    rmSync(join(repoRoot, 'CLAUDE.md'));
+    writeFileSync(join(repoRoot, 'CLAUDE.md'), '# hand-written\n');
+    const result = enableHarnesses(repoRoot, ['claude-code']);
+    expect(result.results[0].status).toBe('blocked');
+    expect(result.results[0].blockingFindings[0].ruleId).toBe('clobber-risk');
+    expect(readFileSync(join(repoRoot, 'CLAUDE.md'), 'utf8')).toBe('# hand-written\n');
+  });
+
+  it('repairs drifted symlinks past a foreign file with --force', () => {
+    enableHarnesses(repoRoot, ['claude-code']);
+    rmSync(join(repoRoot, 'CLAUDE.md'));
+    writeFileSync(join(repoRoot, 'CLAUDE.md'), '# hand-written\n');
+    const result = enableHarnesses(repoRoot, ['claude-code'], { force: true });
+    expect(result.exitCode).toBe(0);
+    expect(lstatSync(join(repoRoot, 'CLAUDE.md')).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(join(repoRoot, 'CLAUDE.md'))).toBe('AGENTS.md');
+  });
 });
