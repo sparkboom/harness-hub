@@ -36,7 +36,7 @@ must therefore carry Cursor's keys — making Cursor's dialect the de facto cano
 format under any passthrough option (spec option A).
 
 **Codex fallback-filename possibility.** `project_doc_fallback_filenames` in
-`.codex/config.toml` can add a canon file (e.g. `.ai/rules/*.md` entries won't
+`.codex/config.toml` can add a canon file (e.g. `.agents/rules/*.md` entries won't
 work — it's filename-based, not glob-based — but a single canon rules file
 could). Semantics: fallback names apply **per directory**, same one-file
 limit. **Verify before relying on it.**

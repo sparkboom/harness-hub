@@ -1,8 +1,8 @@
 # Subagents — harness discovery research
 
 **Type:** research insight · one of the per-asset insight files for harness-hub.
-**Companion spec:** [`harness-wiring.spec.md`](./harness-wiring.spec.md) — implementation decisions live there.
-**Researched against the harness versions in** [`harness-versions.insight.md`](./harness-versions.insight.md).
+**Companion spec:** [`harness-wiring.spec.md`](../2026-09-14-2211-harness-hub/harness-wiring.spec.md) — implementation decisions live there (this asset is deferred from that spec, see its §8).
+**Researched against the harness versions in** [`harness-versions.insight.md`](../2026-09-14-2211-harness-hub/harness-versions.insight.md).
 **Asset:** delegatable sub-agent definitions.
 
 ## Matrix

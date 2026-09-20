@@ -2,8 +2,8 @@
 
 **Status:** draft — model settled in the wiring-spec session (2026-09-15); implementation decisions here, per-asset discovery research stays in the wiring deliverable's insight files
 **Date:** 2026-09-15
-**Extracted from:** [`../2026-09-14-2211-harness-hub/harness-wiring.spec.md`](../2026-09-14-2211-harness-hub/harness-wiring.spec.md) §14.8 (where it was recorded as a settled direction)
-**Depends on:** the wiring deliverable (`harness-hub` CLI, wiring spec §12 generated-file conventions, doctor infrastructure). Design proceeds after wiring ships; this spec owns the details.
+**Extracted from:** [`../2026-09-14-2211-harness-hub/harness-wiring.spec.md`](../2026-09-14-2211-harness-hub/harness-wiring.spec.md) §12.8 (where it was recorded as a settled direction)
+**Depends on:** the wiring deliverable (`harness-hub` CLI, wiring spec §10 generated-file conventions, doctor infrastructure). Design proceeds after wiring ships; this spec owns the details.
 
 ---
 
@@ -28,7 +28,7 @@ Goals:
 ### Non-goals
 
 - **No discovery-rule DSL.** Plain markdown references in the *rendered
-  output* remain the portable discovery convention (wiring spec §10). The
+  output* remain the portable discovery convention (wiring spec §8). The
   template composes; it does not describe harness behavior.
 - **No per-harness conditionals in the doc.** Render inputs must stay
   **harness-agnostic** (repo facts only). A `{{ if claude }}` fork in the
@@ -43,8 +43,8 @@ Canon follows authorship mode — nothing is ever both canon and generated:
 
 | Mode | Canon | Generated | Compat with wiring spec promises |
 |---|---|---|---|
-| **Self-authored** (default, current) | `AGENTS.md` itself | nothing | wiring spec §4/§12 "canon never modified" stands untouched |
-| **Templated** (optional, opt-in) | `template + values` | rendered `AGENTS.md` | rendered doc joins the wiring spec §12 generated-file contract (marked, regenerable, never hand-edited) |
+| **Self-authored** (default, current) | `AGENTS.md` itself | nothing | wiring spec §4/§10 "canon never modified" stands untouched |
+| **Templated** (optional, opt-in) | `template + values` | rendered `AGENTS.md` | rendered doc joins the wiring spec §10 generated-file contract (marked, regenerable, never hand-edited) |
 
 Switching modes is explicit: adopt-templating (self-authored doc becomes the
 initial template/values) and un-template/adopt-back (rendered output becomes
@@ -55,7 +55,7 @@ effect of `enable`/`disable`.
 
 The template engine, data format for values, and file layout are **not
 chosen yet** — they wait for the tooling/software/libs research pass that the
-wiring spec defers (§14.5 there; this spec inherits the deferral). What is
+wiring spec defers (§12.5 there; this spec inherits the deferral). What is
 settled is what the engine must *support*:
 
 - Variables and composition (includes/partials) — the mechanism behind
@@ -68,8 +68,8 @@ settled is what the engine must *support*:
 
   ```
   repo/
-    AGENTS.md                    # rendered output (generated, wiring-spec §12 contract)
-    .ai/
+    AGENTS.md                    # rendered output (generated, wiring-spec §10 contract)
+    .agents/
       agents-md/
         <template>               # template (canon)
         <values>                 # values (canon)
@@ -97,7 +97,7 @@ settled is what the engine must *support*:
   `@path` imports expand in Claude Code only (`harness-agent-doc.insight.md`);
   harness-hub expands composition *before any harness sees the file* — every
   harness consumes flat markdown.
-- **ToC generation** from referenced docs (wiring spec §10's referenced-docs
+- **ToC generation** from referenced docs (wiring spec §8's referenced-docs
   convention) is the piece hand-maintaining a doc does badly and a render step
   does trivially.
 - **Structure discipline** (purpose, git/branching context,
@@ -106,6 +106,19 @@ settled is what the engine must *support*:
 
 ## 6. Open questions
 
+0. **Skills index section.** The default template should render an
+   auto-generated **"Skills located at `.agents/skills/`"** section: one line
+   per canon skill — `- [name](.agents/skills/<name>/SKILL.md): description`,
+   sorted, built by the same render-time mechanism as the ToC (§5). It is the
+   portable discovery channel for anything reading the repo without a skill
+   loader (wiring spec §8's referenced-docs convention), documents the canon
+   location for humans, and is cheap if kept to one line per skill;
+   render-drift checking keeps it from going stale. Default on, opt-out flag;
+   details (exact heading, placement, flag name) land with the template
+   design. ~~Prerequisite: the skills canon-alignment decision (wiring spec
+   §14.1).~~ Resolved 2026-09-15: wiring spec §10.1 adopted
+   `.agents/skills/` — the section renders against repo-root `.agents/skills/`
+   canon, and each line's frontmatter `description` is the natural line body.
 1. **Command name & surface** — `render` vs `build`; flags (e.g. `--check`
    for CI drift detection).
 2. **Engine, values format & layout** — pick via the tooling research pass
@@ -113,8 +126,8 @@ settled is what the engine must *support*:
    whether values are free-form or a light required set (`purpose`,
    `git.branching`) that drives the default template.
 3. **Include boundaries** — can templates include files outside
-   `.ai/agents-md/` (e.g. pull a summary from `docs/`)? Symlink-escape and
-   Windows concerns mirror wiring spec §13.12.
+   `.agents/agents-md/` (e.g. pull a summary from `docs/`)? Symlink-escape and
+   Windows concerns mirror wiring spec §11.12.
 4. **Doctor severity** — render drift: error or warning?
 5. **Adopt-back mechanics** — how un-template rewrites history-free canon
    (straight copy vs cleaned-up render).
