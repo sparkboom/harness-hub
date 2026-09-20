@@ -249,16 +249,43 @@ permanently — that's the intended outcome, not a side effect to undo.
 Hermes reads `.agents/skills/` from the nearest git root natively — nothing
 generated, same as Cursor/OpenCode/Codex/Pi/DeepSeek. The one difference:
 Hermes won't *load* project skills until a human runs `hermes skills trust`
-inside the repo once (a per-machine security decision stored in that user's
-own `~/.hermes/config.yaml`, deliberately outside repo state — skills are
+inside the repo once (a per-machine security decision — skills are
 executable procedure documents, so Hermes won't auto-run them from an
 untrusted clone).
 
-`enable hermes` adds `hermes` to `harnesses` and prints a one-line reminder
-of that step — it does not, and cannot, run `hermes skills trust` on the
-user's behalf; that would defeat the point of the prompt. `doctor` doesn't
-check trust status either, since it lives in the user's home directory, not
-anything repo-local doctor can see.
+Trust is recorded in `skills.trusted_project_dirs` in that user's own
+`~/.hermes/config.yaml`, keyed by the repo's path resolved to the nearest
+ancestor directory containing `.git` (the same resolution Hermes itself
+uses). `doctor` reads this file — read-only — to check whether the current
+repo is listed:
+
+- **Listed** → trusted; check passes.
+- **File exists and parses, repo not listed** → not trusted: error, blocks
+  `enable hermes`.
+- **File missing, or exists but fails to parse** → can't verify: warning,
+  doesn't block. The file may simply not exist yet on a machine that's
+  never run Hermes, or (see below) the format may have moved on since this
+  check was written — either way, guessing wrong shouldn't hard-block
+  `enable`.
+
+`enable hermes` treats this as a hard precondition: it refuses to add
+`hermes` to `harnesses` until the repo is trusted, and this is **not**
+`--force`-able — forcing wouldn't make Hermes actually load anything, since
+trust is a human security decision harness-hub cannot make on the user's
+behalf. The error message doubles as the remediation: run
+`hermes skills trust` inside the repo, then re-run `enable`.
+
+**This check targets exactly one, currently-released trust mechanism**
+(`skills.trusted_project_dirs`). Hermes has an unreleased, in-progress
+migration to a different, per-skill-fingerprinted trust sidecar
+(`~/.hermes/project-trust.json`), tracked in a still-open upstream PR at
+research time — deliberately not supported yet, since it hasn't shipped and
+its shape could still change before release. Once it ships in a released
+Hermes version, this check needs a follow-up update to recognize it too;
+`harness-doctor-architecture.insight.md` (this deliverable's folder) sketches
+a registry-backed, pluggable-check approach that would make that kind of
+update a data change rather than a rewrite — parked as future work, not
+part of this MVP.
 
 ## 7. Skill frontmatter contract
 
@@ -289,9 +316,10 @@ is future work, parked in `harness-hub-future/`).
   modifies canon:
   - Runs the `doctor` checks below as a pre-flight. Warnings surface but
     don't block. A **clobber risk** finding (§9) blocks unless `--force` is
-    passed. An **unmigrated skills** finding (§9, Claude Code only) also
-    blocks, but is **not** `--force`-able — it's resolved by running
-    `migrate`, never by forcing `enable`.
+    passed. An **unmigrated skills** finding (§9, Claude Code only) and a
+    **Hermes trust** finding (§9, Hermes only) also block, but are **not**
+    `--force`-able — they're resolved by running `migrate` or
+    `hermes skills trust` respectively, never by forcing `enable`.
   - Native harnesses: add the harness id to `harnesses` in the config file.
     Nothing else to do — there's nothing to generate.
   - Claude Code: if `.claude/skills/` has entries not yet reflected in
@@ -300,8 +328,10 @@ is future work, parked in `harness-hub-future/`).
     delete the now-redundant `.claude/skills/` real directory if present and
     symlink it to `.agents/skills` (§6); ensure `.gitignore` covers both
     paths; add `claude-code` to `harnesses`.
-  - Hermes: add `hermes` to `harnesses` (native, nothing to generate); print
-    the one-time `hermes skills trust` reminder from §6.
+  - Hermes: blocks unless the repo is already listed in
+    `skills.trusted_project_dirs` (§6, §9's Hermes trust check) — the error
+    message is the one-time `hermes skills trust` reminder. Once trusted:
+    add `hermes` to `harnesses` (native, nothing to generate).
   - Idempotent — running `enable` again with unchanged canon reproduces the
     same result; if canon gained skills since the last run, re-running just
     means the symlink already sees them (nothing to refresh).
@@ -345,6 +375,7 @@ is future work, parked in `harness-hub-future/`).
 | **Clobber risk** | `enable` would overwrite something it doesn't own: a hand-written `CLAUDE.md` that isn't a symlink to `AGENTS.md`, or a `.claude/skills` symlink pointing somewhere other than `.agents/skills` | error (blocks `enable`; `--force` overwrites) |
 | **Unmigrated skills** | A real `.claude/skills/<name>/` exists but has no counterpart yet in canon `.agents/skills/<name>/` | error (blocks `enable`; resolved by running `harness-hub migrate claude-code`, §6, §8 — **not** `--force`-able, since forcing would either drop the skill or silently overwrite canon) |
 | **Skill migration collision** | A real `.claude/skills/<name>/` differs from an existing `.agents/skills/<name>/` (§6) | error (blocks both `migrate` and `enable`; **not** `--force`-able — no safe default direction, must reconcile by hand) |
+| **Hermes trust** | `hermes` is in `harnesses` (or being enabled) but the repo isn't listed in `skills.trusted_project_dirs` (`~/.hermes/config.yaml`, §6) | error (blocks `enable hermes`; **not** `--force`-able — resolved only by running `hermes skills trust`). Downgrades to **warning** if the file is missing or fails to parse — can't verify, doesn't block |
 | **Generated-file drift** | `claude-code` is in `harnesses` but `CLAUDE.md` and/or `.claude/skills` is missing or not a symlink to the expected canon target | warning |
 
 Findings not covered here — precedence-interference files (`AGENTS.override.md`
@@ -370,7 +401,8 @@ cross-harness intent-key parity — are deliberately deferred; see
   `migrate` if canon isn't caught up yet).
 - `enable` refuses to overwrite/relink anything it doesn't own (§9 clobber
   risk) unless `--force` is passed; it refuses to proceed past unmigrated
-  Claude Code skills regardless of `--force` (§9).
+  Claude Code skills or an untrusted Hermes repo regardless of `--force`
+  (§9) — neither has a safe default action to force through.
 - `enable` for `claude-code` keeps `.gitignore` covering `CLAUDE.md` and
   `.claude/skills` — they're regenerated locally, not committed (§6).
 - `disable <harness>` removes only that harness's generated symlinks; it
@@ -394,6 +426,14 @@ cross-harness intent-key parity — are deliberately deferred; see
   at worst (§9's scope doesn't cover it yet either), not a hard failure. See
   the "Benign-looking duplicates rot" failure mode in
   `harness-hub-future/.../harness-skills.insight.md`.
+- Supporting Hermes's unreleased trust-sidecar migration
+  (`~/.hermes/project-trust.json`, per-skill fingerprints) or any
+  harness-version-scoped variation of doctor checks generally. The Hermes
+  trust check (§6, §9) targets only the currently-released
+  `skills.trusted_project_dirs` mechanism; see
+  `harness-doctor-architecture.insight.md` (this deliverable's folder) for
+  the registry-backed, pluggable-check approach earmarked for handling this
+  kind of drift once it becomes its own deliverable.
 - `init`, `status` commands; `--fix`, `--adopt` flags.
 - Precedence-interference, nested-file-inventory, and size-cap doctor checks.
 - Windows (symlinks are load-bearing for Claude Code's wiring, §6; revisit if
