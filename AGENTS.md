@@ -40,3 +40,75 @@ Conventions:
 Specs and plans are typically produced by the Superpowers skills
 (`brainstorming`, `writing-plans`) — see `.cursor/rules/superpowers.mdc`.
 When using those skills in this repo, save their output per this workflow.
+
+## Docs workflow: SDD (Superpowers) artifacts
+
+The Superpowers execution skills (`subagent-driven-development`,
+`executing-plans`, `requesting-code-review`, …) generate per-task artifacts: a
+progress ledger, task briefs, task reports, and code-review diffs. Those
+skills write to a scratch workspace — `.superpowers/sdd/<plan-basename>/` —
+whose path and file names are **hardcoded in the skills' bash scripts
+(`sdd-workspace`, `task-brief`, `review-package`) and cannot be overridden
+from this file**. Leave the skills untouched: let them run natively during
+execution (that scratch is git-ignored and is also what the ledger-recovery
+logic reads, so do not relocate it mid-run).
+
+This repo's convention governs **where the artifacts live once the deliverable
+is done**: promote them from the scratch workspace into the deliverable
+folder, next to the spec and plan. When the plan is finished (or whenever the
+committed record is needed), move the artifacts out of
+`.superpowers/sdd/<plan-basename>/` into `docs/current/{datetime}-{project}/`
+using the layout and names below, then remove the empty scratch directory.
+
+Given a deliverable folder, the promoted layout is:
+
+```
+docs/current/2026-09-20-0021-harness-hub-mvp/
+  harness-hub-mvp.spec.md
+  harness-hub-mvp.plan.md
+  harness-hub-mvp.progress.md
+  tasks/
+    1-project-scaffold-version-utility/
+      2026-09-20-1246-1-project-scaffold-version-utility.brief.md
+      2026-09-20-1315-1-project-scaffold-version-utility.report.md
+      ce5e63c-a8cb808.review.diff
+    ...
+    24-final-fix/
+      2026-09-20-1719-24-final-fix.brief.md
+      2026-09-20-1726-24-final-fix.report.md
+      4a381bf-3e24cb4.review.diff
+```
+
+Conventions:
+
+1. **Progress ledger** — `{deliverable}.progress.md` (e.g.
+   `harness-hub-mvp.progress.md`), beside the spec and plan.
+2. **Task folders** — a `tasks/` subfolder beside the spec/plan/progress holds
+   one folder per task, named `{task number}-{task name}/`. The task name is a
+   kebab-case slug of the plan's task title (e.g.
+   `1-project-scaffold-version-utility/`).
+3. **Briefs & reports** — each task folder holds
+   `{datetime}-{task number}-{task name}.brief.md` and
+   `{datetime}-{task number}-{task name}.report.md`. `{datetime}` is the
+   file's own creation time in `YYYY-MM-DD-HHMM`.
+4. **Review diffs** — each task folder holds `{sha1}-{sha2}.review.diff`,
+   named for the review's commit range.
+5. **Unplanned tasks** — work outside the plan (e.g. a final-fix round) gets
+   an incremental task number continuing from the plan and follows the same
+   naming (e.g. `24-final-fix/`). Cross-cutting reviews that span the whole
+   branch (e.g. the final whole-branch review) live in the final-fix folder.
+
+When a deliverable is archived (rule 5 above), the whole folder — including
+`tasks/` and the progress ledger — moves together, name unchanged. Work that
+is finished but not yet ready for archival may live in an intermediate stage
+(e.g. `docs/complete/`) until review and final disposition.
+
+### Promotion step (when finishing)
+
+The skills' scratch names (`task-N-brief.md`, `task-N-report.md`,
+`review-<base7>..<head7>.diff`, `progress.md`) map onto this convention at
+promotion time — brief/report get the `{datetime}-{N}-{slug}` prefix, the
+review diff becomes `{base7}-{head7}.review.diff` in the task's folder, and
+`progress.md` becomes `{deliverable}.progress.md`. Mapping the scratch files
+to task folders requires the plan (task title → slug, commit range → task),
+so do it against the finished plan, not by guess.
