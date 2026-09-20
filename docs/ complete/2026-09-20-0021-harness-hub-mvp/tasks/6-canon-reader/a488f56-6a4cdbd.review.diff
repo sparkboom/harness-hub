@@ -1,0 +1,63 @@
+# Review package: a488f56..HEAD
+
+## Commits
+6a4cdbd feat: canon reader (AGENTS.md presence, skill dir listing, frontmatter)
+
+## Files changed
+ src/canon.test.ts |  8 ++++++++
+ src/canon.ts      | 12 +++++++++---
+ 2 files changed, 17 insertions(+), 3 deletions(-)
+
+## Diff
+diff --git a/src/canon.test.ts b/src/canon.test.ts
+index 87f72a3..b3b8f8a 100644
+--- a/src/canon.test.ts
++++ b/src/canon.test.ts
+@@ -48,11 +48,19 @@ describe('canon', () => {
+     );
+     const result = readSkillFrontmatter(repoRoot, 'writing-tests');
+     expect(result.hasSkillMd).toBe(true);
+     expect(result.frontmatter).toEqual({ name: 'writing-tests', description: 'How to write tests.' });
+   });
+ 
+   it('reports hasSkillMd: false when SKILL.md is missing', () => {
+     mkdirSync(join(repoRoot, '.agents', 'skills', 'empty-dir'), { recursive: true });
+     expect(readSkillFrontmatter(repoRoot, 'empty-dir').hasSkillMd).toBe(false);
+   });
++
++  it('degrades to undefined frontmatter for malformed YAML instead of throwing', () => {
++    mkdirSync(join(repoRoot, '.agents', 'skills', 'broken'), { recursive: true });
++    writeFileSync(join(repoRoot, '.agents', 'skills', 'broken', 'SKILL.md'), '---\nname: [unclosed\n---\nbody');
++    const result = readSkillFrontmatter(repoRoot, 'broken');
++    expect(result.hasSkillMd).toBe(true);
++    expect(result.frontmatter).toBeUndefined();
++  });
+ });
+diff --git a/src/canon.ts b/src/canon.ts
+index c983a79..e7ae12f 100644
+--- a/src/canon.ts
++++ b/src/canon.ts
+@@ -35,14 +35,20 @@ export interface SkillFrontmatterResult {
+   hasSkillMd: boolean;
+   frontmatter?: Record<string, unknown>;
+ }
+ 
+ /** Reads <skillsRoot>/<name>/SKILL.md's frontmatter, if the file exists. */
+ export function readSkillFrontmatter(repoRoot: string, name: string): SkillFrontmatterResult {
+   const skillMdPath = join(skillsRootDir(repoRoot), name, 'SKILL.md');
+   if (!existsSync(skillMdPath) || !statSync(skillMdPath).isFile()) {
+     return { hasSkillMd: false };
+   }
+-  const raw = readFileSync(skillMdPath, 'utf8');
+-  const parsed = matter(raw);
+-  return { hasSkillMd: true, frontmatter: parsed.data };
++  try {
++    const raw = readFileSync(skillMdPath, 'utf8');
++    const parsed = matter(raw);
++    return { hasSkillMd: true, frontmatter: parsed.data };
++  } catch {
++    // Malformed SKILL.md: degrade to "present but unreadable" so the
++    // skill-frontmatter doctor rule reports it instead of crashing.
++    return { hasSkillMd: true, frontmatter: undefined };
++  }
+ }

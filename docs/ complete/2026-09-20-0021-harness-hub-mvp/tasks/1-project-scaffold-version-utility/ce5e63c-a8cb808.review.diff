@@ -1,0 +1,53 @@
+# Review package: ce5e63c..HEAD
+
+## Commits
+a8cb808 chore: project scaffold (TS/vitest/tsc) + getPackageVersion
+
+## Files changed
+ package.json        | 2 +-
+ src/version.test.ts | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+## Diff
+diff --git a/package.json b/package.json
+index f17aa16..e9a6577 100644
+--- a/package.json
++++ b/package.json
+@@ -1,20 +1,20 @@
+ {
+   "name": "harness-hub",
+   "version": "0.1.0",
+   "description": "Make a repo harness-agnostic: wire AGENTS.md and .agents/skills/ into whichever coding harnesses you enable.",
+   "license": "MIT",
+   "bin": {
+     "harness-hub": "dist/bin.js"
+   },
+   "engines": {
+-    "node": ">=18"
++    "node": ">=22.12.0"
+   },
+   "files": ["dist"],
+   "scripts": {
+     "build": "tsc -p tsconfig.json",
+     "test": "vitest run",
+     "test:watch": "vitest",
+     "typecheck": "tsc -p tsconfig.json --noEmit"
+   },
+   "dependencies": {
+     "commander": "^15.0.0",
+diff --git a/src/version.test.ts b/src/version.test.ts
+index ac92990..7ac040c 100644
+--- a/src/version.test.ts
++++ b/src/version.test.ts
+@@ -1,10 +1,10 @@
+ // src/version.test.ts
+ import { describe, it, expect } from 'vitest';
+ import { getPackageVersion } from './version';
+ 
+ describe('getPackageVersion', () => {
+   it('returns the version string from package.json', () => {
+     const version = getPackageVersion();
+-    expect(version).toMatch(/^\d+\.\d+\.\d+/);
++    expect(version).toBe('0.1.0');
+   });
+ });

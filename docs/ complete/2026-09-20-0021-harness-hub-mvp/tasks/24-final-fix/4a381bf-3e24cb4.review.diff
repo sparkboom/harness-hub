@@ -1,0 +1,4917 @@
+# Review package: 4a381bf..3e24cb4
+
+## Commits
+3e24cb4 feat: CLI wiring (enable/disable/migrate/doctor) + bin entry
+a499de1 feat: disable command
+bfcebdf feat: migrate command
+a21c754 feat: enable command (native + migrate-symlink harnesses, --force, multi-harness)
+d432838 feat: generic migrate-symlink wiring for AGENTS.md + skills
+95b4334 feat: doctor command (runs all rules, formats findings, sets exit code)
+f888c76 feat: assemble all 8 doctor rules + doctor context builder
+0730fca feat: generated-file-drift doctor rule, driven by the harness registry
+4cfb564 feat: trust-gate doctor rule (Hermes skills.trusted_project_dirs)
+327b379 feat: skill-migration doctor rule (unmigrated-skills + skill-migration-collision)
+3293062 feat: registry-driven skill migration classification (new/identical/collision)
+c10f052 feat: clobber-risk doctor rule, driven by the harness registry
+d25c6fa feat: skill-shape and skill-frontmatter doctor rules
+fb6668c feat: canon-presence and config-validity doctor rules
+3e763cb feat: pluggable doctor-rule framework (DoctorRule, runDoctor)
+333ff60 feat: filesystem primitives (copy, byte-compare, symlink checks, gitignore)
+8b0f22a feat: skill frontmatter validation per spec §7
+6a4cdbd feat: canon reader (AGENTS.md presence, skill dir listing, frontmatter)
+bc29f0f feat: harness-hub.yaml/.json load + save
+0151a84 feat: declarative harness-conventions registry
+89064fb feat: HarnessId type + isHarnessId guard
+9d3284a feat: findRepoRoot, matching Hermes's .git-ancestor resolution
+a8cb808 chore: project scaffold (TS/vitest/tsc) + getPackageVersion
+
+## Files changed
+ .gitignore                                  |    4 +-
+ package-lock.json                           | 1706 +++++++++++++++++++++++++++
+ package.json                                |   29 +
+ src/bin.ts                                  |   11 +
+ src/canon.test.ts                           |   66 ++
+ src/canon.ts                                |   54 +
+ src/cli.test.ts                             |   58 +
+ src/cli.ts                                  |   81 ++
+ src/commands/disable.test.ts                |   51 +
+ src/commands/disable.ts                     |   42 +
+ src/commands/doctor.test.ts                 |   29 +
+ src/commands/doctor.ts                      |   27 +
+ src/commands/enable.test.ts                 |  139 +++
+ src/commands/enable.ts                      |   76 ++
+ src/commands/migrate.test.ts                |   55 +
+ src/commands/migrate.ts                     |   47 +
+ src/config.test.ts                          |   82 ++
+ src/config.ts                               |   76 ++
+ src/doctor/context.test.ts                  |   30 +
+ src/doctor/context.ts                       |   14 +
+ src/doctor/rules/canonPresence.test.ts      |   31 +
+ src/doctor/rules/canonPresence.ts           |   19 +
+ src/doctor/rules/clobberRisk.test.ts        |   53 +
+ src/doctor/rules/clobberRisk.ts             |   72 ++
+ src/doctor/rules/configValidity.test.ts     |   43 +
+ src/doctor/rules/configValidity.ts          |   54 +
+ src/doctor/rules/generatedFileDrift.test.ts |   39 +
+ src/doctor/rules/generatedFileDrift.ts      |   46 +
+ src/doctor/rules/index.test.ts              |   19 +
+ src/doctor/rules/index.ts                   |   20 +
+ src/doctor/rules/skillFrontmatter.test.ts   |   39 +
+ src/doctor/rules/skillFrontmatter.ts        |   25 +
+ src/doctor/rules/skillMigration.test.ts     |   52 +
+ src/doctor/rules/skillMigration.ts          |   46 +
+ src/doctor/rules/skillShape.test.ts         |   42 +
+ src/doctor/rules/skillShape.ts              |   32 +
+ src/doctor/rules/trustGate.test.ts          |   61 +
+ src/doctor/rules/trustGate.ts               |   85 ++
+ src/doctor/run.test.ts                      |   95 ++
+ src/doctor/run.ts                           |   20 +
+ src/doctor/types.ts                         |   31 +
+ src/fsutil.test.ts                          |  158 +++
+ src/fsutil.ts                               |   99 ++
+ src/harnesses.test.ts                       |   20 +
+ src/harnesses.ts                            |   15 +
+ src/registry/data.ts                        |   68 ++
+ src/registry/index.test.ts                  |   49 +
+ src/registry/index.ts                       |   10 +
+ src/registry/types.ts                       |   41 +
+ src/repo.test.ts                            |   40 +
+ src/repo.ts                                 |   30 +
+ src/skills/skillMigrationPlan.test.ts       |   45 +
+ src/skills/skillMigrationPlan.ts            |   40 +
+ src/skills/validate.test.ts                 |   45 +
+ src/skills/validate.ts                      |   51 +
+ src/version.test.ts                         |   10 +
+ src/version.ts                              |    9 +
+ src/wiring/migrateSymlink.test.ts           |   55 +
+ src/wiring/migrateSymlink.ts                |   48 +
+ tsconfig.json                               |   17 +
+ vitest.config.ts                            |    8 +
+ 61 files changed, 4458 insertions(+), 1 deletion(-)
+
+## Diff
+diff --git a/.gitignore b/.gitignore
+index aa39edf..13286e1 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1 +1,3 @@
+-.cursor
+\ No newline at end of file
++.cursor
++dist/
++node_modules/
+diff --git a/package-lock.json b/package-lock.json
+new file mode 100644
+index 0000000..331f5ba
+--- /dev/null
++++ b/package-lock.json
+@@ -0,0 +1,1706 @@
++{
++  "name": "harness-hub",
++  "version": "0.1.0",
++  "lockfileVersion": 3,
++  "requires": true,
++  "packages": {
++    "": {
++      "name": "harness-hub",
++      "version": "0.1.0",
++      "license": "MIT",
++      "dependencies": {
++        "commander": "^15.0.0",
++        "gray-matter": "^4.0.3",
++        "yaml": "^2.9.1"
++      },
++      "bin": {
++        "harness-hub": "dist/bin.js"
++      },
++      "devDependencies": {
++        "@types/node": "^22.0.0",
++        "typescript": "^7.0.2",
++        "vitest": "^5.0.1"
++      },
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/@jridgewell/resolve-uri": {
++      "version": "3.1.2",
++      "resolved": "https://registry.npmjs.org/@jridgewell/resolve-uri/-/resolve-uri-3.1.2.tgz",
++      "integrity": "sha512-bRISgCIjP20/tbWSPWMEi54QVPRZExkuD9lJL+UIxUKtwVJA8wW1Trb1jMs1RFXo1CBTNZ/5hpC9QvmKWdopKw==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=6.0.0"
++      }
++    },
++    "node_modules/@jridgewell/sourcemap-codec": {
++      "version": "1.6.0",
++      "resolved": "https://registry.npmjs.org/@jridgewell/sourcemap-codec/-/sourcemap-codec-1.6.0.tgz",
++      "integrity": "sha512-T7jf+5zgsZHwNJ4lvQ7/aezbyk0nNX+zJVWpmHA7VYsEx7a7qr5Rg5IbtJFqkgze5Y2sruq1RUY8Q837Od7iFw==",
++      "dev": true,
++      "license": "MIT"
++    },
++    "node_modules/@jridgewell/trace-mapping": {
++      "version": "0.3.31",
++      "resolved": "https://registry.npmjs.org/@jridgewell/trace-mapping/-/trace-mapping-0.3.31.tgz",
++      "integrity": "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@jridgewell/resolve-uri": "^3.1.0",
++        "@jridgewell/sourcemap-codec": "^1.4.14"
++      }
++    },
++    "node_modules/@oxc-project/types": {
++      "version": "0.150.0",
++      "resolved": "https://registry.npmjs.org/@oxc-project/types/-/types-0.150.0.tgz",
++      "integrity": "sha512-rDS5/31E9HfPl/CIzGrn0DOlvBbXFseQ5URJ9sYMfstbKLD/c6Gm9vmRzRGDdAXyOIL4zmO37lc9RIwYqVruZw==",
++      "dev": true,
++      "license": "MIT",
++      "peer": true,
++      "funding": {
++        "url": "https://github.com/sponsors/oxc-project"
++      }
++    },
++    "node_modules/@rolldown/binding-android-arm-eabi": {
++      "version": "1.2.9",
++      "resolved": "https://registry.npmjs.org/@rolldown/binding-android-arm-eabi/-/binding-android-arm-eabi-1.2.9.tgz",
++      "integrity": "sha512-tNISae1QEf/vkb3xkRcjV5SEdzPE97We5IVaa2Z8jSszQPZ8U60B/YCYpw4QI7VidYsBtKavczXf+DyDs9WGxw==",
++      "cpu": [
++        "arm"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "android"
++      ],
++      "peer": true,
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      }
++    },
++    "node_modules/@rolldown/binding-android-arm64": {
++      "version": "1.2.9",
++      "resolved": "https://registry.npmjs.org/@rolldown/binding-android-arm64/-/binding-android-arm64-1.2.9.tgz",
++      "integrity": "sha512-YC8YsI30o606GTZi0VyzYlsDKFP8W61i/QzayHDkLbNEz/IShqAmTa+hsJRj13xTHA0H+6fk4b2UmGn+Q/cMlg==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "android"
++      ],
++      "peer": true,
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      }
++    },
++    "node_modules/@rolldown/binding-darwin-arm64": {
++      "version": "1.2.9",
++      "resolved": "https://registry.npmjs.org/@rolldown/binding-darwin-arm64/-/binding-darwin-arm64-1.2.9.tgz",
++      "integrity": "sha512-IwhlH3qK5urrY8hZiEgGkHKEFN901p/p2bjxCxJlr4GyNnF7wYpUvK+Y43uaRYuC4hpfjzbR3SJC3arX1jGvmw==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "darwin"
++      ],
++      "peer": true,
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      }
++    },
++    "node_modules/@rolldown/binding-darwin-x64": {
++      "version": "1.2.9",
++      "resolved": "https://registry.npmjs.org/@rolldown/binding-darwin-x64/-/binding-darwin-x64-1.2.9.tgz",
++      "integrity": "sha512-XxpJfVzFh+jilRxIXUqcfYAYcunIc/XEzIizsOL1fcJee5Sf7H3mH8WlLmfHfluz5amqR88QQo9izKtmMlavAw==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "darwin"
++      ],
++      "peer": true,
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      }
++    },
++    "node_modules/@rolldown/binding-freebsd-x64": {
++      "version": "1.2.9",
++      "resolved": "https://registry.npmjs.org/@rolldown/binding-freebsd-x64/-/binding-freebsd-x64-1.2.9.tgz",
++      "integrity": "sha512-kSfvhmgeWyfkbT3p/1s5vSgboogoah2zkm9fX2zjg2hHxSV7T4KhMWRUUaRk4OXNqoD3QAUeRqLcs1aZOK4U1g==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "freebsd"
++      ],
++      "peer": true,
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      }
++    },
++    "node_modules/@rolldown/binding-linux-arm-gnueabihf": {
++      "version": "1.2.9",
++      "resolved": "https://registry.npmjs.org/@rolldown/binding-linux-arm-gnueabihf/-/binding-linux-arm-gnueabihf-1.2.9.tgz",
++      "integrity": "sha512-1RVzG17pxqbTfYLC352JlLt6kKLG+6Hr30n8DlIJqsnV5luUDd2Qdx9Ayw1Cabfyb1K9k0jXEZ7evxkRoT+uiw==",
++      "cpu": [
++        "arm"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "peer": true,
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      }
++    },
++    "node_modules/@rolldown/binding-linux-arm64-gnu": {
++      "version": "1.2.9",
++      "resolved": "https://registry.npmjs.org/@rolldown/binding-linux-arm64-gnu/-/binding-linux-arm64-gnu-1.2.9.tgz",
++      "integrity": "sha512-BXqPvZ2drqVD+/Z8UpKwcs4Mp7grM+eGFku4CAEKrEtcbAsUpzREphK1sogCRZGreVPiMkiiBtw0n3TPteuqvw==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "libc": [
++        "glibc"
++      ],
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "peer": true,
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      }
++    },
++    "node_modules/@rolldown/binding-linux-arm64-musl": {
++      "version": "1.2.9",
++      "resolved": "https://registry.npmjs.org/@rolldown/binding-linux-arm64-musl/-/binding-linux-arm64-musl-1.2.9.tgz",
++      "integrity": "sha512-11vWvo8YDwLzukt27J3aYDWU+gg2P7J+ZOmiJ0hkF5BXZDW7pVya7r40MXDy6ya0i9KamoENSVKIugvJNgFXIA==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "libc": [
++        "musl"
++      ],
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "peer": true,
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      }
++    },
++    "node_modules/@rolldown/binding-linux-ppc64-gnu": {
++      "version": "1.2.9",
++      "resolved": "https://registry.npmjs.org/@rolldown/binding-linux-ppc64-gnu/-/binding-linux-ppc64-gnu-1.2.9.tgz",
++      "integrity": "sha512-a1tijMkdwsIARtc0F39ApURROkf3NwqinI6TOiSSWCTR7dT96dffNvMUtDHnq64wKNTIZOIlzKrFvvFUznJiyw==",
++      "cpu": [
++        "ppc64"
++      ],
++      "dev": true,
++      "libc": [
++        "glibc"
++      ],
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "peer": true,
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      }
++    },
++    "node_modules/@rolldown/binding-linux-s390x-gnu": {
++      "version": "1.2.9",
++      "resolved": "https://registry.npmjs.org/@rolldown/binding-linux-s390x-gnu/-/binding-linux-s390x-gnu-1.2.9.tgz",
++      "integrity": "sha512-x6SQNdAvv4c3hWqTMaWuawzMX9myaCs/yEmlGsxJzkdClnHW7FbrjQuSiRDhuSYzEYoEMhsaJy9qHG/XNemJPQ==",
++      "cpu": [
++        "s390x"
++      ],
++      "dev": true,
++      "libc": [
++        "glibc"
++      ],
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "peer": true,
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      }
++    },
++    "node_modules/@rolldown/binding-linux-x64-gnu": {
++      "version": "1.2.9",
++      "resolved": "https://registry.npmjs.org/@rolldown/binding-linux-x64-gnu/-/binding-linux-x64-gnu-1.2.9.tgz",
++      "integrity": "sha512-9s0AZ8BFK5/n7B/TBoa2yJE3gI3KURrbXcPBlsAsvjU4VeJKgE90y1YtNxyEUIcHPQkg6/yfF3qihUrcM/Kf0Q==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "libc": [
++        "glibc"
++      ],
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "peer": true,
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      }
++    },
++    "node_modules/@rolldown/binding-linux-x64-musl": {
++      "version": "1.2.9",
++      "resolved": "https://registry.npmjs.org/@rolldown/binding-linux-x64-musl/-/binding-linux-x64-musl-1.2.9.tgz",
++      "integrity": "sha512-P7VWAmV+WdJluH7ovnRGoiv2i8To7GAZ+kGzfGup635cyL7SyYl3lSUaA3Gp5THf0n/Co5EyEqb2zbqq+nMOHQ==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "libc": [
++        "musl"
++      ],
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "peer": true,
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      }
++    },
++    "node_modules/@rolldown/binding-openharmony-arm64": {
++      "version": "1.2.9",
++      "resolved": "https://registry.npmjs.org/@rolldown/binding-openharmony-arm64/-/binding-openharmony-arm64-1.2.9.tgz",
++      "integrity": "sha512-1qixtsE4BK8h+yS3BfmZ09UhA7O/N4IACva6YBr7EBvCJraByTuRcgOTaiA62Tm0vey3UcKXLOaoGHtYmNGEVg==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "openharmony"
++      ],
++      "peer": true,
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      }
++    },
++    "node_modules/@rolldown/binding-win32-arm64-msvc": {
++      "version": "1.2.9",
++      "resolved": "https://registry.npmjs.org/@rolldown/binding-win32-arm64-msvc/-/binding-win32-arm64-msvc-1.2.9.tgz",
++      "integrity": "sha512-ok8IQjcEPs1AKZfuEUznVBrJw+gK4soq+bx8b1X2XoMqVClarc1q5JDmVtWXY1xfr6ZuHTAsPXHTgTrqKTZeww==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "win32"
++      ],
++      "peer": true,
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      }
++    },
++    "node_modules/@rolldown/binding-win32-x64-msvc": {
++      "version": "1.2.9",
++      "resolved": "https://registry.npmjs.org/@rolldown/binding-win32-x64-msvc/-/binding-win32-x64-msvc-1.2.9.tgz",
++      "integrity": "sha512-Ip2mXoU0hM0boq3Rf+ekuT653OROSo6aSYcPT1VHE4q52KvyxgFkQgrgb/IEsxOuvQ2fZZbs8khJAyCEPM24/g==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "win32"
++      ],
++      "peer": true,
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      }
++    },
++    "node_modules/@rolldown/pluginutils": {
++      "version": "1.0.1",
++      "resolved": "https://registry.npmjs.org/@rolldown/pluginutils/-/pluginutils-1.0.1.tgz",
++      "integrity": "sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw==",
++      "dev": true,
++      "license": "MIT",
++      "peer": true
++    },
++    "node_modules/@types/chai": {
++      "version": "5.2.3",
++      "resolved": "https://registry.npmjs.org/@types/chai/-/chai-5.2.3.tgz",
++      "integrity": "sha512-Mw558oeA9fFbv65/y4mHtXDs9bPnFMZAL/jxdPFUpOHHIXX91mcgEHbS5Lahr+pwZFR8A7GQleRWeI6cGFC2UA==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@types/deep-eql": "*",
++        "assertion-error": "^2.0.1"
++      }
++    },
++    "node_modules/@types/deep-eql": {
++      "version": "4.0.2",
++      "resolved": "https://registry.npmjs.org/@types/deep-eql/-/deep-eql-4.0.2.tgz",
++      "integrity": "sha512-c9h9dVVMigMPc4bwTvC5dxqtqJZwQPePsWjPlpSOnojbor6pGqdk541lfA7AqFQr5pB1BRdq0juY9db81BwyFw==",
++      "dev": true,
++      "license": "MIT"
++    },
++    "node_modules/@types/estree": {
++      "version": "1.0.9",
++      "resolved": "https://registry.npmjs.org/@types/estree/-/estree-1.0.9.tgz",
++      "integrity": "sha512-GhdPgy1el4/ImP05X05Uw4cw2/M93BCUmnEvWZNStlCzEKME4Fkk+YpoA5OiHNQmoS7Cafb8Xa3Pya8m1Qrzeg==",
++      "dev": true,
++      "license": "MIT"
++    },
++    "node_modules/@types/node": {
++      "version": "22.20.4",
++      "resolved": "https://registry.npmjs.org/@types/node/-/node-22.20.4.tgz",
++      "integrity": "sha512-zJRE40jpHtKqE/C4fgHrAKQLJuSpzEnP9ff9Y7YtoR3Wd2pwqzlekDeEuUQXjRd+QCYnVnNwuJYmhdk9XV8gvA==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "undici-types": "~6.21.0"
++      }
++    },
++    "node_modules/@typescript/typescript-aix-ppc64": {
++      "version": "7.0.2",
++      "resolved": "https://registry.npmjs.org/@typescript/typescript-aix-ppc64/-/typescript-aix-ppc64-7.0.2.tgz",
++      "integrity": "sha512-MTKKkWB7p/0E9xi1d1tHtZ5PiLkGEMIq88pK2CubZjOsLtYTLqhgIgi6zepFa+9GHZ6h05NMCkQxGKiPXMxXtQ==",
++      "cpu": [
++        "ppc64"
++      ],
++      "dev": true,
++      "license": "Apache-2.0",
++      "optional": true,
++      "os": [
++        "aix"
++      ],
++      "engines": {
++        "node": ">=16.20.0"
++      }
++    },
++    "node_modules/@typescript/typescript-darwin-arm64": {
++      "version": "7.0.2",
++      "resolved": "https://registry.npmjs.org/@typescript/typescript-darwin-arm64/-/typescript-darwin-arm64-7.0.2.tgz",
++      "integrity": "sha512-gowzar9MwS/aRWp6f3a4KUqzRjAZjOsmGNCM6LcTgXum+dBfgsBVMN+AgvOCCbguXyick6LJhpBszxMebJ8syA==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "Apache-2.0",
++      "optional": true,
++      "os": [
++        "darwin"
++      ],
++      "engines": {
++        "node": ">=16.20.0"
++      }
++    },
++    "node_modules/@typescript/typescript-darwin-x64": {
++      "version": "7.0.2",
++      "resolved": "https://registry.npmjs.org/@typescript/typescript-darwin-x64/-/typescript-darwin-x64-7.0.2.tgz",
++      "integrity": "sha512-SZ9xZInqApNlNGc9s0W1VSsktYSOe9cFqNOIqmN1Gs8SmkjKZYFt017G4VwPxASInODuAdbTW7sXiFUf893RgA==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "Apache-2.0",
++      "optional": true,
++      "os": [
++        "darwin"
++      ],
++      "engines": {
++        "node": ">=16.20.0"
++      }
++    },
++    "node_modules/@typescript/typescript-freebsd-arm64": {
++      "version": "7.0.2",
++      "resolved": "https://registry.npmjs.org/@typescript/typescript-freebsd-arm64/-/typescript-freebsd-arm64-7.0.2.tgz",
++      "integrity": "sha512-W5NH4y/J0plIIS5b2xvTEkU7JFxyqdMAOgf+Ilhl0vHQXKO5dZoxd+C/jEtq56c4F3wk71RB4BMRQ2XdI+bwYQ==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "Apache-2.0",
++      "optional": true,
++      "os": [
++        "freebsd"
++      ],
++      "engines": {
++        "node": ">=16.20.0"
++      }
++    },
++    "node_modules/@typescript/typescript-freebsd-x64": {
++      "version": "7.0.2",
++      "resolved": "https://registry.npmjs.org/@typescript/typescript-freebsd-x64/-/typescript-freebsd-x64-7.0.2.tgz",
++      "integrity": "sha512-UMGDx5sTpzNw3WiPebH7l90IWfJggEd+egHt/q6p7/Cm3zqoV7VxkGXt+3DxPIw8CcmvAB0j3sVVfbhX+M4Tpw==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "Apache-2.0",
++      "optional": true,
++      "os": [
++        "freebsd"
++      ],
++      "engines": {
++        "node": ">=16.20.0"
++      }
++    },
++    "node_modules/@typescript/typescript-linux-arm": {
++      "version": "7.0.2",
++      "resolved": "https://registry.npmjs.org/@typescript/typescript-linux-arm/-/typescript-linux-arm-7.0.2.tgz",
++      "integrity": "sha512-gffT3xPz9sR7j/YJExkyPntrI0P2EP9XbOyWzth2/Gs0RstK+90RBcO0ncXoXy/beYll1SXw846Nf2zdnEz0QQ==",
++      "cpu": [
++        "arm"
++      ],
++      "dev": true,
++      "license": "Apache-2.0",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": ">=16.20.0"
++      }
++    },
++    "node_modules/@typescript/typescript-linux-arm64": {
++      "version": "7.0.2",
++      "resolved": "https://registry.npmjs.org/@typescript/typescript-linux-arm64/-/typescript-linux-arm64-7.0.2.tgz",
++      "integrity": "sha512-Qh4eU4/y3yDjnfjjyPYihMj5/ODIlmt+Bzu17OI+fiSRDW57QmU5SiN63exPRNJPKUzcc1INa1NXdrJ+MqHjUQ==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "Apache-2.0",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": ">=16.20.0"
++      }
++    },
++    "node_modules/@typescript/typescript-linux-loong64": {
++      "version": "7.0.2",
++      "resolved": "https://registry.npmjs.org/@typescript/typescript-linux-loong64/-/typescript-linux-loong64-7.0.2.tgz",
++      "integrity": "sha512-uEHck9i8hoAzXPiYRib1O7miOnz23SxIeVl6F4LXox+qov1K35jHcEW6VHKvZI+pyvl7fZEP4MCU5LYvIq1GuQ==",
++      "cpu": [
++        "loong64"
++      ],
++      "dev": true,
++      "license": "Apache-2.0",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": ">=16.20.0"
++      }
++    },
++    "node_modules/@typescript/typescript-linux-mips64el": {
++      "version": "7.0.2",
++      "resolved": "https://registry.npmjs.org/@typescript/typescript-linux-mips64el/-/typescript-linux-mips64el-7.0.2.tgz",
++      "integrity": "sha512-R4KvAMnE43W5Qeqb0Ly56O3mWMWIAgsMyz36DCaycd5nbg/9kzm0liw3JocfRqyJY0KPmzFjbswozXyW0DnIYA==",
++      "cpu": [
++        "mips64el"
++      ],
++      "dev": true,
++      "license": "Apache-2.0",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": ">=16.20.0"
++      }
++    },
++    "node_modules/@typescript/typescript-linux-ppc64": {
++      "version": "7.0.2",
++      "resolved": "https://registry.npmjs.org/@typescript/typescript-linux-ppc64/-/typescript-linux-ppc64-7.0.2.tgz",
++      "integrity": "sha512-DORx5b3sd/4S7eayxm4FQv+A7CrkUIGRaHiwI8oiHTAI1fAPWhF4J0vAlkC8biAlHSVVwxMQ3tjZ2/DVbnQiiA==",
++      "cpu": [
++        "ppc64"
++      ],
++      "dev": true,
++      "license": "Apache-2.0",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": ">=16.20.0"
++      }
++    },
++    "node_modules/@typescript/typescript-linux-riscv64": {
++      "version": "7.0.2",
++      "resolved": "https://registry.npmjs.org/@typescript/typescript-linux-riscv64/-/typescript-linux-riscv64-7.0.2.tgz",
++      "integrity": "sha512-wf0jqEDOjrPRnKwYRyyJDRo11KMbvMFrU+q4zqKyChODBzvlkbhNQfKvLxQCcwTpdDaXSHZTVuh0JoCrKCUMHQ==",
++      "cpu": [
++        "riscv64"
++      ],
++      "dev": true,
++      "license": "Apache-2.0",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": ">=16.20.0"
++      }
++    },
++    "node_modules/@typescript/typescript-linux-s390x": {
++      "version": "7.0.2",
++      "resolved": "https://registry.npmjs.org/@typescript/typescript-linux-s390x/-/typescript-linux-s390x-7.0.2.tgz",
++      "integrity": "sha512-IkwJc3L7yhytWd/ewjyxNDfOmswCm9GWMJT/ue/dU4aZNbwZeYAetq42VyLmsmSjvoX7z74X6ZaYCtzAr0EuGw==",
++      "cpu": [
++        "s390x"
++      ],
++      "dev": true,
++      "license": "Apache-2.0",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": ">=16.20.0"
++      }
++    },
++    "node_modules/@typescript/typescript-linux-x64": {
++      "version": "7.0.2",
++      "resolved": "https://registry.npmjs.org/@typescript/typescript-linux-x64/-/typescript-linux-x64-7.0.2.tgz",
++      "integrity": "sha512-EYdf2cNg7rgCWJnxCdJ+F3V39O8ihb37eHAu1LK8oAFizgTQbPOK7zHHXbPt8rX24COqODXeI3sIf0fCXG7H/A==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "Apache-2.0",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "engines": {
++        "node": ">=16.20.0"
++      }
++    },
++    "node_modules/@typescript/typescript-netbsd-arm64": {
++      "version": "7.0.2",
++      "resolved": "https://registry.npmjs.org/@typescript/typescript-netbsd-arm64/-/typescript-netbsd-arm64-7.0.2.tgz",
++      "integrity": "sha512-+polYF4MF04aPpO5FTkHran9yUQDSXqy5GiSDKpsll5jy3l3+g9QLhpf39T+ePtefhXLOGrLl0QIjkQP6VnelA==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "Apache-2.0",
++      "optional": true,
++      "os": [
++        "netbsd"
++      ],
++      "engines": {
++        "node": ">=16.20.0"
++      }
++    },
++    "node_modules/@typescript/typescript-netbsd-x64": {
++      "version": "7.0.2",
++      "resolved": "https://registry.npmjs.org/@typescript/typescript-netbsd-x64/-/typescript-netbsd-x64-7.0.2.tgz",
++      "integrity": "sha512-8YIT0EHM/3dq10ZOVF/A7pc/YSMtbcecct4rWtexrnSCHOPcpC2KTLXfTCR6vDpnSiY12heNb1GiN/wu+T/FyA==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "Apache-2.0",
++      "optional": true,
++      "os": [
++        "netbsd"
++      ],
++      "engines": {
++        "node": ">=16.20.0"
++      }
++    },
++    "node_modules/@typescript/typescript-openbsd-arm64": {
++      "version": "7.0.2",
++      "resolved": "https://registry.npmjs.org/@typescript/typescript-openbsd-arm64/-/typescript-openbsd-arm64-7.0.2.tgz",
++      "integrity": "sha512-APT8+ClYnuYm1u9+kgGXoMj2VzWzcymwh2gNSQVySHfkRDGOTVkoWLjCmOQSaO+PoqQ57B0flRp9SA+7GnnkzQ==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "Apache-2.0",
++      "optional": true,
++      "os": [
++        "openbsd"
++      ],
++      "engines": {
++        "node": ">=16.20.0"
++      }
++    },
++    "node_modules/@typescript/typescript-openbsd-x64": {
++      "version": "7.0.2",
++      "resolved": "https://registry.npmjs.org/@typescript/typescript-openbsd-x64/-/typescript-openbsd-x64-7.0.2.tgz",
++      "integrity": "sha512-yX7s+Q0Dln0Dt9tEzZsAjXXR/+ytBM7AlglaqyeMPxQszJ1JhlJdZ6jLA+IzldHtflX81em7lDao1xXu+aRRkg==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "Apache-2.0",
++      "optional": true,
++      "os": [
++        "openbsd"
++      ],
++      "engines": {
++        "node": ">=16.20.0"
++      }
++    },
++    "node_modules/@typescript/typescript-sunos-x64": {
++      "version": "7.0.2",
++      "resolved": "https://registry.npmjs.org/@typescript/typescript-sunos-x64/-/typescript-sunos-x64-7.0.2.tgz",
++      "integrity": "sha512-dLJDGaLZ1D4HPQn62u1n8mBDkJREwMsAkCdkwd4Ieqw+x3TUyTsqY0YiBCtE6H6OzzgGk3iuZ3vFWRS+E8/d1g==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "Apache-2.0",
++      "optional": true,
++      "os": [
++        "sunos"
++      ],
++      "engines": {
++        "node": ">=16.20.0"
++      }
++    },
++    "node_modules/@typescript/typescript-win32-arm64": {
++      "version": "7.0.2",
++      "resolved": "https://registry.npmjs.org/@typescript/typescript-win32-arm64/-/typescript-win32-arm64-7.0.2.tgz",
++      "integrity": "sha512-Gyl1Vy6OsWesLzmq+EP0Fb7b4Nid5232AvcA2SFcdYreldpNtYFFofPjnt62y9hQy7VTaZp65ICJjuAQRaVcIQ==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "Apache-2.0",
++      "optional": true,
++      "os": [
++        "win32"
++      ],
++      "engines": {
++        "node": ">=16.20.0"
++      }
++    },
++    "node_modules/@typescript/typescript-win32-x64": {
++      "version": "7.0.2",
++      "resolved": "https://registry.npmjs.org/@typescript/typescript-win32-x64/-/typescript-win32-x64-7.0.2.tgz",
++      "integrity": "sha512-0BQ3HkAHHlKLSp1qRvf3SUhGpGsDuhB/jgFw75guyqbxJqEaS0Cw/VFO8i2nHglJUzQCRtMMR/IBAKE3ETMC4g==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "Apache-2.0",
++      "optional": true,
++      "os": [
++        "win32"
++      ],
++      "engines": {
++        "node": ">=16.20.0"
++      }
++    },
++    "node_modules/@vitest/mocker": {
++      "version": "5.0.1",
++      "resolved": "https://registry.npmjs.org/@vitest/mocker/-/mocker-5.0.1.tgz",
++      "integrity": "sha512-6K1DoBNAPGvuOcSsGA4D6x+5zEEff/KmOOP3uetT2TrGpVfI+HRHRnJJfKi5ib/g1vx8IYHQD8s0pbJz8WQI7Q==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@jridgewell/trace-mapping": "0.3.31",
++        "@vitest/spy": "5.0.1",
++        "estree-walker": "^3.0.3",
++        "magic-string": "^1.2.3"
++      },
++      "funding": {
++        "url": "https://opencollective.com/vitest"
++      },
++      "peerDependencies": {
++        "msw": "^2.4.9",
++        "vite": "^6.0.0 || ^7.0.0 || ^8.0.0"
++      },
++      "peerDependenciesMeta": {
++        "msw": {
++          "optional": true
++        },
++        "vite": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/@vitest/spy": {
++      "version": "5.0.1",
++      "resolved": "https://registry.npmjs.org/@vitest/spy/-/spy-5.0.1.tgz",
++      "integrity": "sha512-rbto/mF/SGERxEgYOek7Xm6B9b+y+mVoo+f4b2LymYO8zM1b7uB5nHuhVMTP2hxdzgxvGiZYGxGIaMvL5y180Q==",
++      "dev": true,
++      "license": "MIT",
++      "funding": {
++        "url": "https://opencollective.com/vitest"
++      }
++    },
++    "node_modules/argparse": {
++      "version": "1.0.10",
++      "resolved": "https://registry.npmjs.org/argparse/-/argparse-1.0.10.tgz",
++      "integrity": "sha512-o5Roy6tNG4SL/FOkCAN6RzjiakZS25RLYFrcMttJqbdd8BWrnA+fGz57iN5Pb06pvBGvl5gQ0B48dJlslXvoTg==",
++      "license": "MIT",
++      "dependencies": {
++        "sprintf-js": "~1.0.2"
++      }
++    },
++    "node_modules/assertion-error": {
++      "version": "2.0.1",
++      "resolved": "https://registry.npmjs.org/assertion-error/-/assertion-error-2.0.1.tgz",
++      "integrity": "sha512-Izi8RQcffqCeNVgFigKli1ssklIbpHnCYc6AknXGYoB6grJqyeby7jv12JUQgmTAnIDnbck1uxksT4dzN3PWBA==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/chai": {
++      "version": "6.2.2",
++      "resolved": "https://registry.npmjs.org/chai/-/chai-6.2.2.tgz",
++      "integrity": "sha512-NUPRluOfOiTKBKvWPtSD4PhFvWCqOi0BGStNWs57X9js7XGTprSmFoz5F0tWhR4WPjNeR9jXqdC7/UpSJTnlRg==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/commander": {
++      "version": "15.0.0",
++      "resolved": "https://registry.npmjs.org/commander/-/commander-15.0.0.tgz",
++      "integrity": "sha512-z67u4ZhzCL/Tydu1lJARtEZYWbWaN7oYLHbsuzocr6y4N6WZAagG3RQ4FW61V1/0+jImpj293XfrcYnd1qxtPg==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=22.12.0"
++      }
++    },
++    "node_modules/detect-libc": {
++      "version": "2.1.2",
++      "resolved": "https://registry.npmjs.org/detect-libc/-/detect-libc-2.1.2.tgz",
++      "integrity": "sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ==",
++      "dev": true,
++      "license": "Apache-2.0",
++      "peer": true,
++      "engines": {
++        "node": ">=8"
++      }
++    },
++    "node_modules/es-module-lexer": {
++      "version": "2.3.2",
++      "resolved": "https://registry.npmjs.org/es-module-lexer/-/es-module-lexer-2.3.2.tgz",
++      "integrity": "sha512-poHGpORABojJJucnV9KbOavETW8lBVnphkW77ER5/BQ5Fz7oXSoCNek7IH3vR5nRjdsEz926ibFYX8KtLQmdyw==",
++      "dev": true,
++      "license": "MIT"
++    },
++    "node_modules/esprima": {
++      "version": "4.0.1",
++      "resolved": "https://registry.npmjs.org/esprima/-/esprima-4.0.1.tgz",
++      "integrity": "sha512-eGuFFw7Upda+g4p+QHvnW0RyTX/SVeJBDM/gCtMARO0cLuT2HcEKnTPvhjV6aGeqrCB/sbNop0Kszm0jsaWU4A==",
++      "license": "BSD-2-Clause",
++      "bin": {
++        "esparse": "bin/esparse.js",
++        "esvalidate": "bin/esvalidate.js"
++      },
++      "engines": {
++        "node": ">=4"
++      }
++    },
++    "node_modules/estree-walker": {
++      "version": "3.0.3",
++      "resolved": "https://registry.npmjs.org/estree-walker/-/estree-walker-3.0.3.tgz",
++      "integrity": "sha512-7RUKfXgSMMkzt6ZuXmqapOurLGPPfgj6l9uRZ7lRGolvk0y2yocc35LdcxKC5PQZdn2DMqioAQ2NoWcrTKmm6g==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@types/estree": "^1.0.0"
++      }
++    },
++    "node_modules/expect-type": {
++      "version": "1.4.0",
++      "resolved": "https://registry.npmjs.org/expect-type/-/expect-type-1.4.0.tgz",
++      "integrity": "sha512-KfYbmpRm0VbLjEvVa9yGwCi9GI34xvi7A/HXYWQO65CSD2u3MczUJSuwXKFIxlGsgBQizV9q5J9NHj4VG0n+pA==",
++      "dev": true,
++      "license": "Apache-2.0",
++      "engines": {
++        "node": ">=12.0.0"
++      }
++    },
++    "node_modules/extend-shallow": {
++      "version": "2.0.1",
++      "resolved": "https://registry.npmjs.org/extend-shallow/-/extend-shallow-2.0.1.tgz",
++      "integrity": "sha512-zCnTtlxNoAiDc3gqY2aYAWFx7XWWiasuF2K8Me5WbN8otHKTUKBwjPtNpRs/rbUZm7KxWAaNj7P1a/p52GbVug==",
++      "license": "MIT",
++      "dependencies": {
++        "is-extendable": "^0.1.0"
++      },
++      "engines": {
++        "node": ">=0.10.0"
++      }
++    },
++    "node_modules/fdir": {
++      "version": "6.5.0",
++      "resolved": "https://registry.npmjs.org/fdir/-/fdir-6.5.0.tgz",
++      "integrity": "sha512-tIbYtZbucOs0BRGqPJkshJUYdL+SDH7dVM8gjy+ERp3WAUjLEFJE+02kanyHtwjWOnwrKYBiwAmM0p4kLJAnXg==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=12.0.0"
++      },
++      "peerDependencies": {
++        "picomatch": "^3 || ^4"
++      },
++      "peerDependenciesMeta": {
++        "picomatch": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/fsevents": {
++      "version": "2.3.3",
++      "resolved": "https://registry.npmjs.org/fsevents/-/fsevents-2.3.3.tgz",
++      "integrity": "sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw==",
++      "dev": true,
++      "hasInstallScript": true,
++      "license": "MIT",
++      "optional": true,
++      "os": [
++        "darwin"
++      ],
++      "peer": true,
++      "engines": {
++        "node": "^8.16.0 || ^10.6.0 || >=11.0.0"
++      }
++    },
++    "node_modules/gray-matter": {
++      "version": "4.0.3",
++      "resolved": "https://registry.npmjs.org/gray-matter/-/gray-matter-4.0.3.tgz",
++      "integrity": "sha512-5v6yZd4JK3eMI3FqqCouswVqwugaA9r4dNZB1wwcmrD02QkV5H0y7XBQW8QwQqEaZY1pM9aqORSORhJRdNK44Q==",
++      "license": "MIT",
++      "dependencies": {
++        "js-yaml": "^3.13.1",
++        "kind-of": "^6.0.2",
++        "section-matter": "^1.0.0",
++        "strip-bom-string": "^1.0.0"
++      },
++      "engines": {
++        "node": ">=6.0"
++      }
++    },
++    "node_modules/is-extendable": {
++      "version": "0.1.1",
++      "resolved": "https://registry.npmjs.org/is-extendable/-/is-extendable-0.1.1.tgz",
++      "integrity": "sha512-5BMULNob1vgFX6EjQw5izWDxrecWK9AM72rugNr0TFldMOi0fj6Jk+zeKIt0xGj4cEfQIJth4w3OKWOJ4f+AFw==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=0.10.0"
++      }
++    },
++    "node_modules/js-yaml": {
++      "version": "3.15.2",
++      "resolved": "https://registry.npmjs.org/js-yaml/-/js-yaml-3.15.2.tgz",
++      "integrity": "sha512-6EuL879VkRA+1Cz578mKMiKvjPNEuk6+r1JaFzoSWejZmtf7xWbIyw1e3KkxlkzTIt9Taw6JBhEppG7utc1P+w==",
++      "license": "MIT",
++      "dependencies": {
++        "argparse": "^1.0.7",
++        "esprima": "^4.0.0"
++      },
++      "bin": {
++        "js-yaml": "bin/js-yaml.js"
++      }
++    },
++    "node_modules/kind-of": {
++      "version": "6.0.3",
++      "resolved": "https://registry.npmjs.org/kind-of/-/kind-of-6.0.3.tgz",
++      "integrity": "sha512-dcS1ul+9tmeD95T+x28/ehLgd9mENa3LsvDTtzm3vyBEO7RPptvAD+t44WVXaUjTBRcrpFeFlC8WCruUR456hw==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=0.10.0"
++      }
++    },
++    "node_modules/lightningcss": {
++      "version": "1.33.0",
++      "resolved": "https://registry.npmjs.org/lightningcss/-/lightningcss-1.33.0.tgz",
++      "integrity": "sha512-WkUDrojuJs0xkgGf2udWxa3yGBRxPtxUkB79i6aCZLRgc7PM8fZe9TosfPDcvEpQZbuFASnHYmRLBLUbmLOIIA==",
++      "dev": true,
++      "license": "MPL-2.0",
++      "peer": true,
++      "dependencies": {
++        "detect-libc": "^2.0.3"
++      },
++      "engines": {
++        "node": ">= 12.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/parcel"
++      },
++      "optionalDependencies": {
++        "lightningcss-android-arm64": "1.33.0",
++        "lightningcss-darwin-arm64": "1.33.0",
++        "lightningcss-darwin-x64": "1.33.0",
++        "lightningcss-freebsd-x64": "1.33.0",
++        "lightningcss-linux-arm-gnueabihf": "1.33.0",
++        "lightningcss-linux-arm64-gnu": "1.33.0",
++        "lightningcss-linux-arm64-musl": "1.33.0",
++        "lightningcss-linux-x64-gnu": "1.33.0",
++        "lightningcss-linux-x64-musl": "1.33.0",
++        "lightningcss-win32-arm64-msvc": "1.33.0",
++        "lightningcss-win32-x64-msvc": "1.33.0"
++      }
++    },
++    "node_modules/lightningcss-android-arm64": {
++      "version": "1.33.0",
++      "resolved": "https://registry.npmjs.org/lightningcss-android-arm64/-/lightningcss-android-arm64-1.33.0.tgz",
++      "integrity": "sha512-gEpRTalKdosp4Bb8qWtc2iOgE5SeIHlpS1up9bFq2wAyYhl1UdTObYiHe98zEM9SQvSoqQZ1IQD0JNpg3Ml5pg==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "MPL-2.0",
++      "optional": true,
++      "os": [
++        "android"
++      ],
++      "peer": true,
++      "engines": {
++        "node": ">= 12.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/parcel"
++      }
++    },
++    "node_modules/lightningcss-darwin-arm64": {
++      "version": "1.33.0",
++      "resolved": "https://registry.npmjs.org/lightningcss-darwin-arm64/-/lightningcss-darwin-arm64-1.33.0.tgz",
++      "integrity": "sha512-Sciaz8eenNTKn9b3t7+xr0ipTp9YxKQY4npwQ3mrRuL0BAVHBLyZxofhaKBAVtzmtRZ/zTyo0/to4B1uWG/Djg==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "MPL-2.0",
++      "optional": true,
++      "os": [
++        "darwin"
++      ],
++      "peer": true,
++      "engines": {
++        "node": ">= 12.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/parcel"
++      }
++    },
++    "node_modules/lightningcss-darwin-x64": {
++      "version": "1.33.0",
++      "resolved": "https://registry.npmjs.org/lightningcss-darwin-x64/-/lightningcss-darwin-x64-1.33.0.tgz",
++      "integrity": "sha512-Z5UPAxzrjlWNNyGy6i65cJzzvgJ5D3T6wMvs+gWpY9d7qRhANrxqAp6LhxIgZhWEw18RfJTGcRxjuLIBr+m8XQ==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "MPL-2.0",
++      "optional": true,
++      "os": [
++        "darwin"
++      ],
++      "peer": true,
++      "engines": {
++        "node": ">= 12.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/parcel"
++      }
++    },
++    "node_modules/lightningcss-freebsd-x64": {
++      "version": "1.33.0",
++      "resolved": "https://registry.npmjs.org/lightningcss-freebsd-x64/-/lightningcss-freebsd-x64-1.33.0.tgz",
++      "integrity": "sha512-QQM/Ti/hQajJwCY+RiWuCZ9sdtI/XQk7nDK5vC8kkdwixezOlDgvDx7+RT+QjK6FcFT4MpsuoBnHIo/O3StRRg==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "MPL-2.0",
++      "optional": true,
++      "os": [
++        "freebsd"
++      ],
++      "peer": true,
++      "engines": {
++        "node": ">= 12.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/parcel"
++      }
++    },
++    "node_modules/lightningcss-linux-arm-gnueabihf": {
++      "version": "1.33.0",
++      "resolved": "https://registry.npmjs.org/lightningcss-linux-arm-gnueabihf/-/lightningcss-linux-arm-gnueabihf-1.33.0.tgz",
++      "integrity": "sha512-N7FVBe6iS24MlM6R/4RBTxGhQheZGs7tiQ9U32UtF75NzP5Q7xWPRqLBCKxlRQRk3rY1jCIPLzx7WzOhuUIRLQ==",
++      "cpu": [
++        "arm"
++      ],
++      "dev": true,
++      "license": "MPL-2.0",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "peer": true,
++      "engines": {
++        "node": ">= 12.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/parcel"
++      }
++    },
++    "node_modules/lightningcss-linux-arm64-gnu": {
++      "version": "1.33.0",
++      "resolved": "https://registry.npmjs.org/lightningcss-linux-arm64-gnu/-/lightningcss-linux-arm64-gnu-1.33.0.tgz",
++      "integrity": "sha512-j2v/itmy4HlNxlc6voKXYgBqNi0Ng2LShg4z7GufpEgs05P+2suBVyi9I6YHq5uoVFx9ETin3eCEhLVyXGQnKg==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "libc": [
++        "glibc"
++      ],
++      "license": "MPL-2.0",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "peer": true,
++      "engines": {
++        "node": ">= 12.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/parcel"
++      }
++    },
++    "node_modules/lightningcss-linux-arm64-musl": {
++      "version": "1.33.0",
++      "resolved": "https://registry.npmjs.org/lightningcss-linux-arm64-musl/-/lightningcss-linux-arm64-musl-1.33.0.tgz",
++      "integrity": "sha512-yiO5ROMuYQgXbC60yjZU5CYSFZGKXL0HFATXt9mHJn1+zW55oCtMI9NfcVhYLMFDL7gV7oBPon/EmMMGg2OvtQ==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "libc": [
++        "musl"
++      ],
++      "license": "MPL-2.0",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "peer": true,
++      "engines": {
++        "node": ">= 12.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/parcel"
++      }
++    },
++    "node_modules/lightningcss-linux-x64-gnu": {
++      "version": "1.33.0",
++      "resolved": "https://registry.npmjs.org/lightningcss-linux-x64-gnu/-/lightningcss-linux-x64-gnu-1.33.0.tgz",
++      "integrity": "sha512-ar+Ju7LmcN0Jo4FpL4hpFybwNG9/3A/Br5KW2n2jyODg3MEZXaDYADdemoNS+BDNfMgKvylJLj4S5tyRActuAg==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "libc": [
++        "glibc"
++      ],
++      "license": "MPL-2.0",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "peer": true,
++      "engines": {
++        "node": ">= 12.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/parcel"
++      }
++    },
++    "node_modules/lightningcss-linux-x64-musl": {
++      "version": "1.33.0",
++      "resolved": "https://registry.npmjs.org/lightningcss-linux-x64-musl/-/lightningcss-linux-x64-musl-1.33.0.tgz",
++      "integrity": "sha512-RYiYbkokw0trfKqqzfF55lginwEPrD3OJDfTuJzFs1MK6iFnDenaz1fqLLtX4ITG3OktJQXOeTaw1awrBAlZPw==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "libc": [
++        "musl"
++      ],
++      "license": "MPL-2.0",
++      "optional": true,
++      "os": [
++        "linux"
++      ],
++      "peer": true,
++      "engines": {
++        "node": ">= 12.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/parcel"
++      }
++    },
++    "node_modules/lightningcss-win32-arm64-msvc": {
++      "version": "1.33.0",
++      "resolved": "https://registry.npmjs.org/lightningcss-win32-arm64-msvc/-/lightningcss-win32-arm64-msvc-1.33.0.tgz",
++      "integrity": "sha512-1K+MPfLSFVpphzpdbfkhlWk6wBrTObBzS2T6db10PNOZgR9GoVsAWzwNyuhUYYbTp23j+4RrncfujZ4uAzXvwA==",
++      "cpu": [
++        "arm64"
++      ],
++      "dev": true,
++      "license": "MPL-2.0",
++      "optional": true,
++      "os": [
++        "win32"
++      ],
++      "peer": true,
++      "engines": {
++        "node": ">= 12.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/parcel"
++      }
++    },
++    "node_modules/lightningcss-win32-x64-msvc": {
++      "version": "1.33.0",
++      "resolved": "https://registry.npmjs.org/lightningcss-win32-x64-msvc/-/lightningcss-win32-x64-msvc-1.33.0.tgz",
++      "integrity": "sha512-OlEICDx/Xl0FqSp4bry8zFnCvGpig3Gl4gCquvYwHuqJKEC1+n9NgDniFvqHGmMv1ZkqDJrDqKKSykTDX+ehuA==",
++      "cpu": [
++        "x64"
++      ],
++      "dev": true,
++      "license": "MPL-2.0",
++      "optional": true,
++      "os": [
++        "win32"
++      ],
++      "peer": true,
++      "engines": {
++        "node": ">= 12.0.0"
++      },
++      "funding": {
++        "type": "opencollective",
++        "url": "https://opencollective.com/parcel"
++      }
++    },
++    "node_modules/magic-string": {
++      "version": "1.4.1",
++      "resolved": "https://registry.npmjs.org/magic-string/-/magic-string-1.4.1.tgz",
++      "integrity": "sha512-8lyCu36ErXR0J9uaGKlKQoiLZKmtI63YGLE8G2o9jyRPdr4X47LusSOwgOJOzcVtp81fTAAjxR7BwKz682Jhow==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@jridgewell/sourcemap-codec": "^1.6.0"
++      }
++    },
++    "node_modules/nanoid": {
++      "version": "3.3.19",
++      "resolved": "https://registry.npmjs.org/nanoid/-/nanoid-3.3.19.tgz",
++      "integrity": "sha512-Y2tUNy4ouw6tq5oDSKeQYGOyhkUBhNOcGV/02KC+6kd9eDGqdZd++mjMiIDilrBYvjEnCYvVtsuHCuP+okSfug==",
++      "dev": true,
++      "funding": [
++        {
++          "type": "github",
++          "url": "https://github.com/sponsors/ai"
++        }
++      ],
++      "license": "MIT",
++      "peer": true,
++      "bin": {
++        "nanoid": "bin/nanoid.cjs"
++      },
++      "engines": {
++        "node": "^10 || ^12 || ^13.7 || ^14 || >=15.0.1"
++      }
++    },
++    "node_modules/obug": {
++      "version": "2.2.1",
++      "resolved": "https://registry.npmjs.org/obug/-/obug-2.2.1.tgz",
++      "integrity": "sha512-XrsrhT5sybtKI6wakr2SPOlGZWWYbUXZ7a0jT8/QOeAPau+1X/bSegNe5YR75oJmEZQbKningirmGOEJCIk61Q==",
++      "dev": true,
++      "funding": [
++        "https://github.com/sponsors/sxzz",
++        "https://opencollective.com/debug"
++      ],
++      "license": "MIT",
++      "engines": {
++        "node": ">=12.20.0"
++      }
++    },
++    "node_modules/picocolors": {
++      "version": "1.1.1",
++      "resolved": "https://registry.npmjs.org/picocolors/-/picocolors-1.1.1.tgz",
++      "integrity": "sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA==",
++      "dev": true,
++      "license": "ISC",
++      "peer": true
++    },
++    "node_modules/picomatch": {
++      "version": "4.0.7",
++      "resolved": "https://registry.npmjs.org/picomatch/-/picomatch-4.0.7.tgz",
++      "integrity": "sha512-qcJu88Q2IWqJsDD529JKMdwGm/dvInW4HvQnRwiH9JtihJvzGOscDtHE3x1pBKeUOTysQ8kVmLnJ2kJu7yhcGA==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=12"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/jonschlinkert"
++      }
++    },
++    "node_modules/postcss": {
++      "version": "8.5.28",
++      "resolved": "https://registry.npmjs.org/postcss/-/postcss-8.5.28.tgz",
++      "integrity": "sha512-RRuzqDtt5Y9h3quz5hWhK+TPnsmVs6WwSU6LkJMeY4HstUEDuYTG8UJSdawMRzmzAtV+KEoG8N3Qg2qLy5vM/A==",
++      "dev": true,
++      "funding": [
++        {
++          "type": "opencollective",
++          "url": "https://opencollective.com/postcss/"
++        },
++        {
++          "type": "tidelift",
++          "url": "https://tidelift.com/funding/github/npm/postcss"
++        },
++        {
++          "type": "github",
++          "url": "https://github.com/sponsors/ai"
++        }
++      ],
++      "license": "MIT",
++      "peer": true,
++      "dependencies": {
++        "nanoid": "^3.3.18",
++        "picocolors": "^1.1.1",
++        "source-map-js": "^1.2.1"
++      },
++      "engines": {
++        "node": "^10 || ^12 || >=14"
++      }
++    },
++    "node_modules/rolldown": {
++      "version": "1.2.9",
++      "resolved": "https://registry.npmjs.org/rolldown/-/rolldown-1.2.9.tgz",
++      "integrity": "sha512-hx/Pv0N1haXRb11qkfnK5MXB/iqr7i0yjWQqmO9uHqZpBgQSqzc8UsSnEpalsh+j1I8qQ2CkXAkJC8Br3dKSlg==",
++      "dev": true,
++      "license": "MIT",
++      "peer": true,
++      "dependencies": {
++        "@oxc-project/types": "=0.150.0",
++        "@rolldown/pluginutils": "^1.0.0"
++      },
++      "bin": {
++        "rolldown": "bin/cli.mjs"
++      },
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      },
++      "optionalDependencies": {
++        "@rolldown/binding-android-arm-eabi": "1.2.9",
++        "@rolldown/binding-android-arm64": "1.2.9",
++        "@rolldown/binding-darwin-arm64": "1.2.9",
++        "@rolldown/binding-darwin-x64": "1.2.9",
++        "@rolldown/binding-freebsd-x64": "1.2.9",
++        "@rolldown/binding-linux-arm-gnueabihf": "1.2.9",
++        "@rolldown/binding-linux-arm64-gnu": "1.2.9",
++        "@rolldown/binding-linux-arm64-musl": "1.2.9",
++        "@rolldown/binding-linux-ppc64-gnu": "1.2.9",
++        "@rolldown/binding-linux-s390x-gnu": "1.2.9",
++        "@rolldown/binding-linux-x64-gnu": "1.2.9",
++        "@rolldown/binding-linux-x64-musl": "1.2.9",
++        "@rolldown/binding-openharmony-arm64": "1.2.9",
++        "@rolldown/binding-win32-arm64-msvc": "1.2.9",
++        "@rolldown/binding-win32-x64-msvc": "1.2.9"
++      }
++    },
++    "node_modules/section-matter": {
++      "version": "1.0.0",
++      "resolved": "https://registry.npmjs.org/section-matter/-/section-matter-1.0.0.tgz",
++      "integrity": "sha512-vfD3pmTzGpufjScBh50YHKzEu2lxBWhVEHsNGoEXmCmn2hKGfeNLYMzCJpe8cD7gqX7TJluOVpBkAequ6dgMmA==",
++      "license": "MIT",
++      "dependencies": {
++        "extend-shallow": "^2.0.1",
++        "kind-of": "^6.0.0"
++      },
++      "engines": {
++        "node": ">=4"
++      }
++    },
++    "node_modules/siginfo": {
++      "version": "2.0.0",
++      "resolved": "https://registry.npmjs.org/siginfo/-/siginfo-2.0.0.tgz",
++      "integrity": "sha512-ybx0WO1/8bSBLEWXZvEd7gMW3Sn3JFlW3TvX1nREbDLRNQNaeNN8WK0meBwPdAaOI7TtRRRJn/Es1zhrrCHu7g==",
++      "dev": true,
++      "license": "ISC"
++    },
++    "node_modules/source-map-js": {
++      "version": "1.2.1",
++      "resolved": "https://registry.npmjs.org/source-map-js/-/source-map-js-1.2.1.tgz",
++      "integrity": "sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA==",
++      "dev": true,
++      "license": "BSD-3-Clause",
++      "peer": true,
++      "engines": {
++        "node": ">=0.10.0"
++      }
++    },
++    "node_modules/sprintf-js": {
++      "version": "1.0.3",
++      "resolved": "https://registry.npmjs.org/sprintf-js/-/sprintf-js-1.0.3.tgz",
++      "integrity": "sha512-D9cPgkvLlV3t3IzL0D0YLvGA9Ahk4PcvVwUbN0dSGr1aP0Nrt4AEnTUbuGvquEC0mA64Gqt1fzirlRs5ibXx8g==",
++      "license": "BSD-3-Clause"
++    },
++    "node_modules/stackback": {
++      "version": "0.0.2",
++      "resolved": "https://registry.npmjs.org/stackback/-/stackback-0.0.2.tgz",
++      "integrity": "sha512-1XMJE5fQo1jGH6Y/7ebnwPOBEkIEnT4QF32d5R1+VXdXveM0IBMJt8zfaxX1P3QhVwrYe+576+jkANtSS2mBbw==",
++      "dev": true,
++      "license": "MIT"
++    },
++    "node_modules/std-env": {
++      "version": "4.2.0",
++      "resolved": "https://registry.npmjs.org/std-env/-/std-env-4.2.0.tgz",
++      "integrity": "sha512-oCUKSupKTHX53EyjDtuZQ64pjLJ6yYCtpmEw0goYxtjG9KpbRe8KAsl2tBUGU9DyMcJ0RwJ8GqJAFzMXcXW1Rw==",
++      "dev": true,
++      "license": "MIT"
++    },
++    "node_modules/strip-bom-string": {
++      "version": "1.0.0",
++      "resolved": "https://registry.npmjs.org/strip-bom-string/-/strip-bom-string-1.0.0.tgz",
++      "integrity": "sha512-uCC2VHvQRYu+lMh4My/sFNmF2klFymLX1wHJeXnbEJERpV/ZsVuonzerjfrGpIGF7LBVa1O7i9kjiWvJiFck8g==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=0.10.0"
++      }
++    },
++    "node_modules/tinybench": {
++      "version": "6.1.4",
++      "resolved": "https://registry.npmjs.org/tinybench/-/tinybench-6.1.4.tgz",
++      "integrity": "sha512-9APumHG7r4yOk4X4WlkmE71aZcv1gvin1czO3OQ1U9iJcFA5Ja/ygyb0vPOVHTthFozUYs8CLoLUlM8grb2lTQ==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=20.0.0"
++      }
++    },
++    "node_modules/tinyexec": {
++      "version": "1.3.0",
++      "resolved": "https://registry.npmjs.org/tinyexec/-/tinyexec-1.3.0.tgz",
++      "integrity": "sha512-QKAl9m8gWWGHV8jZcPeym6j+XULi6tOf1mT83WYJ4Lk2ytW/uwAWkrP0uFsdoYMdueVJ0qs26wZ+23xeB4ibNQ==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/tinyglobby": {
++      "version": "0.2.17",
++      "resolved": "https://registry.npmjs.org/tinyglobby/-/tinyglobby-0.2.17.tgz",
++      "integrity": "sha512-wXR/dYpcqKmfWpEdZjiKJOwCNFndD0DMnrW/cYjVGttEkBfVgcLFHoNrlj47mjOVic9yyNu65alsgF4NQyTa2g==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "fdir": "^6.5.0",
++        "picomatch": "^4.0.4"
++      },
++      "engines": {
++        "node": ">=12.0.0"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/SuperchupuDev"
++      }
++    },
++    "node_modules/typescript": {
++      "version": "7.0.2",
++      "resolved": "https://registry.npmjs.org/typescript/-/typescript-7.0.2.tgz",
++      "integrity": "sha512-8FYau96o3NKOhbjKi/qNvG/W5jhzxkbdm5sj9AbZ/5T5sWqn3hJgLfGx27sRKZWTvyzCP8dLRBTf5tBTSRVUNA==",
++      "dev": true,
++      "license": "Apache-2.0",
++      "bin": {
++        "tsc": "bin/tsc"
++      },
++      "engines": {
++        "node": ">=16.20.0"
++      },
++      "optionalDependencies": {
++        "@typescript/typescript-aix-ppc64": "7.0.2",
++        "@typescript/typescript-darwin-arm64": "7.0.2",
++        "@typescript/typescript-darwin-x64": "7.0.2",
++        "@typescript/typescript-freebsd-arm64": "7.0.2",
++        "@typescript/typescript-freebsd-x64": "7.0.2",
++        "@typescript/typescript-linux-arm": "7.0.2",
++        "@typescript/typescript-linux-arm64": "7.0.2",
++        "@typescript/typescript-linux-loong64": "7.0.2",
++        "@typescript/typescript-linux-mips64el": "7.0.2",
++        "@typescript/typescript-linux-ppc64": "7.0.2",
++        "@typescript/typescript-linux-riscv64": "7.0.2",
++        "@typescript/typescript-linux-s390x": "7.0.2",
++        "@typescript/typescript-linux-x64": "7.0.2",
++        "@typescript/typescript-netbsd-arm64": "7.0.2",
++        "@typescript/typescript-netbsd-x64": "7.0.2",
++        "@typescript/typescript-openbsd-arm64": "7.0.2",
++        "@typescript/typescript-openbsd-x64": "7.0.2",
++        "@typescript/typescript-sunos-x64": "7.0.2",
++        "@typescript/typescript-win32-arm64": "7.0.2",
++        "@typescript/typescript-win32-x64": "7.0.2"
++      }
++    },
++    "node_modules/undici-types": {
++      "version": "6.21.0",
++      "resolved": "https://registry.npmjs.org/undici-types/-/undici-types-6.21.0.tgz",
++      "integrity": "sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==",
++      "dev": true,
++      "license": "MIT"
++    },
++    "node_modules/vite": {
++      "version": "8.3.0",
++      "resolved": "https://registry.npmjs.org/vite/-/vite-8.3.0.tgz",
++      "integrity": "sha512-lhZBVvEHefgE+HQZC9O7EBJgCU/nVzFNl7vkS4RE0APtWLP02/8QVIkQtzBxPquh7lq5/78NHipTj7ODQ6XuyQ==",
++      "dev": true,
++      "license": "MIT",
++      "peer": true,
++      "dependencies": {
++        "lightningcss": "^1.33.0",
++        "picomatch": "^4.0.7",
++        "postcss": "^8.5.28",
++        "rolldown": "~1.2.6",
++        "tinyglobby": "^0.2.17"
++      },
++      "bin": {
++        "vite": "bin/vite.js"
++      },
++      "engines": {
++        "node": "^20.19.0 || >=22.12.0"
++      },
++      "funding": {
++        "url": "https://github.com/vitejs/vite?sponsor=1"
++      },
++      "optionalDependencies": {
++        "fsevents": "~2.3.3"
++      },
++      "peerDependencies": {
++        "@types/node": "^20.19.0 || >=22.12.0",
++        "@vitejs/devtools": "^0.7.1",
++        "esbuild": "^0.27.0 || ^0.28.0",
++        "jiti": ">=1.21.0",
++        "less": "^4.0.0",
++        "sass": "^1.70.0",
++        "sass-embedded": "^1.70.0",
++        "stylus": ">=0.54.8",
++        "sugarss": "^5.0.0",
++        "terser": "^5.16.0",
++        "tsx": "^4.8.1",
++        "yaml": "^2.4.2"
++      },
++      "peerDependenciesMeta": {
++        "@types/node": {
++          "optional": true
++        },
++        "@vitejs/devtools": {
++          "optional": true
++        },
++        "esbuild": {
++          "optional": true
++        },
++        "jiti": {
++          "optional": true
++        },
++        "less": {
++          "optional": true
++        },
++        "sass": {
++          "optional": true
++        },
++        "sass-embedded": {
++          "optional": true
++        },
++        "stylus": {
++          "optional": true
++        },
++        "sugarss": {
++          "optional": true
++        },
++        "terser": {
++          "optional": true
++        },
++        "tsx": {
++          "optional": true
++        },
++        "yaml": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/vitest": {
++      "version": "5.0.1",
++      "resolved": "https://registry.npmjs.org/vitest/-/vitest-5.0.1.tgz",
++      "integrity": "sha512-iA95lQbKEkvrtTkdAgnWbXfbipWiiWe/hDl2P5tMi6WFwD76G0NxXAGp/M9EOcYupeGJRr6wppMc7CoA41TQjg==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@types/chai": "^5.2.2",
++        "@vitest/mocker": "5.0.1",
++        "chai": "^6.2.2",
++        "es-module-lexer": "^2.3.2",
++        "expect-type": "^1.4.0",
++        "magic-string": "^1.2.3",
++        "obug": "^2.1.4",
++        "picomatch": "^4.0.7",
++        "std-env": "^4.2.0",
++        "tinybench": "6.1.4",
++        "tinyexec": "1.3.0",
++        "tinyglobby": "^0.2.17",
++        "why-is-node-running": "^2.3.0"
++      },
++      "bin": {
++        "vitest": "vitest.mjs"
++      },
++      "engines": {
++        "node": "^22.12.0 || ^24.0.0 || >=26.0.0"
++      },
++      "funding": {
++        "url": "https://opencollective.com/vitest"
++      },
++      "peerDependencies": {
++        "@edge-runtime/vm": "*",
++        "@opentelemetry/api": "^1.9.0",
++        "@types/node": "^22.0.0 || >=24.0.0",
++        "@vitest/browser-playwright": "5.0.1",
++        "@vitest/browser-preview": "5.0.1",
++        "@vitest/browser-webdriverio": "^5.0.0-beta.5 || >=5.0.0",
++        "@vitest/coverage-istanbul": "5.0.1",
++        "@vitest/coverage-v8": "5.0.1",
++        "@vitest/ui": "5.0.1",
++        "happy-dom": "*",
++        "jsdom": "*",
++        "vite": "^6.4.0 || ^7.0.0 || ^8.0.0"
++      },
++      "peerDependenciesMeta": {
++        "@edge-runtime/vm": {
++          "optional": true
++        },
++        "@opentelemetry/api": {
++          "optional": true
++        },
++        "@types/node": {
++          "optional": true
++        },
++        "@vitest/browser-playwright": {
++          "optional": true
++        },
++        "@vitest/browser-preview": {
++          "optional": true
++        },
++        "@vitest/browser-webdriverio": {
++          "optional": true
++        },
++        "@vitest/coverage-istanbul": {
++          "optional": true
++        },
++        "@vitest/coverage-v8": {
++          "optional": true
++        },
++        "@vitest/ui": {
++          "optional": true
++        },
++        "happy-dom": {
++          "optional": true
++        },
++        "jsdom": {
++          "optional": true
++        },
++        "vite": {
++          "optional": false
++        }
++      }
++    },
++    "node_modules/why-is-node-running": {
++      "version": "2.3.0",
++      "resolved": "https://registry.npmjs.org/why-is-node-running/-/why-is-node-running-2.3.0.tgz",
++      "integrity": "sha512-hUrmaWBdVDcxvYqnyh09zunKzROWjbZTiNy8dBEjkS7ehEDQibXJ7XvlmtbwuTclUiIyN+CyXQD4Vmko8fNm8w==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "siginfo": "^2.0.0",
++        "stackback": "0.0.2"
++      },
++      "bin": {
++        "why-is-node-running": "cli.js"
++      },
++      "engines": {
++        "node": ">=8"
++      }
++    },
++    "node_modules/yaml": {
++      "version": "2.9.1",
++      "resolved": "https://registry.npmjs.org/yaml/-/yaml-2.9.1.tgz",
++      "integrity": "sha512-3NxN8+78OdzbT7C/WjGsyfPAtJaN3FNDsWxv7Y7mcDsT/oOmgW8BpyQQFFBnvZE3j9Y2Sdz1ULFLezL7Eb2yFw==",
++      "license": "ISC",
++      "bin": {
++        "yaml": "bin.mjs"
++      },
++      "engines": {
++        "node": ">= 14.6"
++      },
++      "funding": {
++        "url": "https://github.com/sponsors/eemeli"
++      }
++    }
++  }
++}
+diff --git a/package.json b/package.json
+new file mode 100644
+index 0000000..e9a6577
+--- /dev/null
++++ b/package.json
+@@ -0,0 +1,29 @@
++{
++  "name": "harness-hub",
++  "version": "0.1.0",
++  "description": "Make a repo harness-agnostic: wire AGENTS.md and .agents/skills/ into whichever coding harnesses you enable.",
++  "license": "MIT",
++  "bin": {
++    "harness-hub": "dist/bin.js"
++  },
++  "engines": {
++    "node": ">=22.12.0"
++  },
++  "files": ["dist"],
++  "scripts": {
++    "build": "tsc -p tsconfig.json",
++    "test": "vitest run",
++    "test:watch": "vitest",
++    "typecheck": "tsc -p tsconfig.json --noEmit"
++  },
++  "dependencies": {
++    "commander": "^15.0.0",
++    "gray-matter": "^4.0.3",
++    "yaml": "^2.9.1"
++  },
++  "devDependencies": {
++    "@types/node": "^22.0.0",
++    "typescript": "^7.0.2",
++    "vitest": "^5.0.1"
++  }
++}
+diff --git a/src/bin.ts b/src/bin.ts
+new file mode 100644
+index 0000000..9e24aa8
+--- /dev/null
++++ b/src/bin.ts
+@@ -0,0 +1,11 @@
++#!/usr/bin/env node
++// src/bin.ts
++import { main } from './cli';
++
++main(process.argv.slice(2)).then(
++  (exitCode) => process.exit(exitCode),
++  (err) => {
++    console.error(err instanceof Error ? err.message : String(err));
++    process.exit(1);
++  }
++);
+diff --git a/src/canon.test.ts b/src/canon.test.ts
+new file mode 100644
+index 0000000..b3b8f8a
+--- /dev/null
++++ b/src/canon.test.ts
+@@ -0,0 +1,66 @@
++import { describe, it, expect, beforeEach, afterEach } from 'vitest';
++import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import {
++  hasAgentsMd,
++  listSkillDirNames,
++  listSkillsRootNonDirEntries,
++  readSkillFrontmatter,
++} from './canon';
++
++describe('canon', () => {
++  let repoRoot: string;
++
++  beforeEach(() => {
++    repoRoot = mkdtempSync(join(tmpdir(), 'hh-canon-'));
++  });
++
++  afterEach(() => {
++    rmSync(repoRoot, { recursive: true, force: true });
++  });
++
++  it('detects AGENTS.md presence', () => {
++    expect(hasAgentsMd(repoRoot)).toBe(false);
++    writeFileSync(join(repoRoot, 'AGENTS.md'), '# Agents\n');
++    expect(hasAgentsMd(repoRoot)).toBe(true);
++  });
++
++  it('returns an empty list when .agents/skills is absent', () => {
++    expect(listSkillDirNames(repoRoot)).toEqual([]);
++  });
++
++  it('lists only directories under .agents/skills, and reports stray non-dir entries separately', () => {
++    const skillsDir = join(repoRoot, '.agents', 'skills');
++    mkdirSync(join(skillsDir, 'writing-tests'), { recursive: true });
++    mkdirSync(join(skillsDir, 'debugging'), { recursive: true });
++    writeFileSync(join(skillsDir, 'stray.md'), '# stray\n');
++    expect(listSkillDirNames(repoRoot).sort()).toEqual(['debugging', 'writing-tests']);
++    expect(listSkillsRootNonDirEntries(repoRoot)).toEqual(['stray.md']);
++  });
++
++  it('reads a skill SKILL.md frontmatter', () => {
++    const skillDir = join(repoRoot, '.agents', 'skills', 'writing-tests');
++    mkdirSync(skillDir, { recursive: true });
++    writeFileSync(
++      join(skillDir, 'SKILL.md'),
++      '---\nname: writing-tests\ndescription: How to write tests.\n---\n\nBody text.\n'
++    );
++    const result = readSkillFrontmatter(repoRoot, 'writing-tests');
++    expect(result.hasSkillMd).toBe(true);
++    expect(result.frontmatter).toEqual({ name: 'writing-tests', description: 'How to write tests.' });
++  });
++
++  it('reports hasSkillMd: false when SKILL.md is missing', () => {
++    mkdirSync(join(repoRoot, '.agents', 'skills', 'empty-dir'), { recursive: true });
++    expect(readSkillFrontmatter(repoRoot, 'empty-dir').hasSkillMd).toBe(false);
++  });
++
++  it('degrades to undefined frontmatter for malformed YAML instead of throwing', () => {
++    mkdirSync(join(repoRoot, '.agents', 'skills', 'broken'), { recursive: true });
++    writeFileSync(join(repoRoot, '.agents', 'skills', 'broken', 'SKILL.md'), '---\nname: [unclosed\n---\nbody');
++    const result = readSkillFrontmatter(repoRoot, 'broken');
++    expect(result.hasSkillMd).toBe(true);
++    expect(result.frontmatter).toBeUndefined();
++  });
++});
+diff --git a/src/canon.ts b/src/canon.ts
+new file mode 100644
+index 0000000..e7ae12f
+--- /dev/null
++++ b/src/canon.ts
+@@ -0,0 +1,54 @@
++import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
++import { join } from 'node:path';
++import matter from 'gray-matter';
++
++export const AGENTS_MD_FILENAME = 'AGENTS.md';
++export const SKILLS_DIR = join('.agents', 'skills');
++
++export function hasAgentsMd(repoRoot: string): boolean {
++  return existsSync(join(repoRoot, AGENTS_MD_FILENAME));
++}
++
++export function skillsRootDir(repoRoot: string): string {
++  return join(repoRoot, SKILLS_DIR);
++}
++
++/** Every direct child directory of .agents/skills/, by name. Empty array if the dir is absent. */
++export function listSkillDirNames(repoRoot: string): string[] {
++  const root = skillsRootDir(repoRoot);
++  if (!existsSync(root)) return [];
++  return readdirSync(root, { withFileTypes: true })
++    .filter((entry) => entry.isDirectory())
++    .map((entry) => entry.name);
++}
++
++/** Any entry directly under .agents/skills/ that is NOT a directory (e.g. a stray flat .md file). */
++export function listSkillsRootNonDirEntries(repoRoot: string): string[] {
++  const root = skillsRootDir(repoRoot);
++  if (!existsSync(root)) return [];
++  return readdirSync(root, { withFileTypes: true })
++    .filter((entry) => !entry.isDirectory())
++    .map((entry) => entry.name);
++}
++
++export interface SkillFrontmatterResult {
++  hasSkillMd: boolean;
++  frontmatter?: Record<string, unknown>;
++}
++
++/** Reads <skillsRoot>/<name>/SKILL.md's frontmatter, if the file exists. */
++export function readSkillFrontmatter(repoRoot: string, name: string): SkillFrontmatterResult {
++  const skillMdPath = join(skillsRootDir(repoRoot), name, 'SKILL.md');
++  if (!existsSync(skillMdPath) || !statSync(skillMdPath).isFile()) {
++    return { hasSkillMd: false };
++  }
++  try {
++    const raw = readFileSync(skillMdPath, 'utf8');
++    const parsed = matter(raw);
++    return { hasSkillMd: true, frontmatter: parsed.data };
++  } catch {
++    // Malformed SKILL.md: degrade to "present but unreadable" so the
++    // skill-frontmatter doctor rule reports it instead of crashing.
++    return { hasSkillMd: true, frontmatter: undefined };
++  }
++}
+diff --git a/src/cli.test.ts b/src/cli.test.ts
+new file mode 100644
+index 0000000..ea71361
+--- /dev/null
++++ b/src/cli.test.ts
+@@ -0,0 +1,58 @@
++// src/cli.test.ts
++import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
++import { mkdtempSync, rmSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import { main } from './cli';
++
++describe('cli main()', () => {
++  let repoRoot: string;
++  let originalCwd: string;
++
++  beforeEach(() => {
++    repoRoot = mkdtempSync(join(tmpdir(), 'hh-cli-'));
++    mkdirSync(join(repoRoot, '.git'));
++    writeFileSync(join(repoRoot, 'AGENTS.md'), '# Agents\n');
++    originalCwd = process.cwd();
++    process.chdir(repoRoot);
++    vi.spyOn(console, 'log').mockImplementation(() => {});
++    vi.spyOn(console, 'error').mockImplementation(() => {});
++  });
++
++  afterEach(() => {
++    process.chdir(originalCwd);
++    rmSync(repoRoot, { recursive: true, force: true });
++    vi.restoreAllMocks();
++  });
++
++  it('doctor exits 0 for a minimal valid repo', async () => {
++    expect(await main(['doctor'])).toBe(0);
++  });
++
++  it('enable writes harness-hub.yaml for a native harness', async () => {
++    expect(await main(['enable', 'cursor'])).toBe(0);
++    expect(existsSync(join(repoRoot, 'harness-hub.yaml'))).toBe(true);
++  });
++
++  it('enable then disable claude-code round-trips cleanly', async () => {
++    expect(await main(['enable', 'claude-code'])).toBe(0);
++    expect(existsSync(join(repoRoot, 'CLAUDE.md'))).toBe(true);
++    expect(await main(['disable', 'claude-code'])).toBe(0);
++    expect(existsSync(join(repoRoot, 'CLAUDE.md'))).toBe(false);
++  });
++
++  it('rejects an unrecognized harness id', async () => {
++    expect(await main(['enable', 'not-a-harness'])).toBe(1);
++  });
++
++  it('migrate reports nothing to migrate for a clean claude-code repo', async () => {
++    expect(await main(['migrate', 'claude-code'])).toBe(0);
++  });
++
++  it('fails clearly outside a git repo', async () => {
++    const nonRepo = mkdtempSync(join(tmpdir(), 'hh-nonrepo-'));
++    process.chdir(nonRepo);
++    expect(await main(['doctor'])).toBe(1);
++    rmSync(nonRepo, { recursive: true, force: true });
++  });
++});
+diff --git a/src/cli.ts b/src/cli.ts
+new file mode 100644
+index 0000000..a23f33a
+--- /dev/null
++++ b/src/cli.ts
+@@ -0,0 +1,81 @@
++// src/cli.ts
++import { Command } from 'commander';
++import { findRepoRoot } from './repo';
++import { isHarnessId, type HarnessId } from './harnesses';
++import { enableHarnesses } from './commands/enable';
++import { disableHarnesses } from './commands/disable';
++import { migrateHarness } from './commands/migrate';
++import { runDoctorCommand } from './commands/doctor';
++import { getPackageVersion } from './version';
++
++function parseHarnessIds(values: string[]): HarnessId[] {
++  const invalid = values.filter((v) => !isHarnessId(v));
++  if (invalid.length > 0) {
++    throw new Error(`Unrecognized harness id(s): ${invalid.join(', ')}`);
++  }
++  return values as HarnessId[];
++}
++
++export async function main(argv: string[]): Promise<number> {
++  let exitCode = 0;
++  const program = new Command();
++  program.name('harness-hub').version(getPackageVersion()).exitOverride();
++
++  program
++    .command('enable <harnesses...>')
++    .option('--force', 'overwrite clobber-risk findings (CLAUDE.md, .claude/skills symlink target)')
++    .action((harnesses: string[], opts: { force?: boolean }) => {
++      const repoRoot = findRepoRoot(process.cwd());
++      const harnessIds = parseHarnessIds(harnesses);
++      const result = enableHarnesses(repoRoot, harnessIds, { force: opts.force });
++      for (const r of result.results) {
++        if (r.status === 'blocked') {
++          console.error(`harness-hub enable ${r.harnessId}: blocked`);
++          for (const f of r.blockingFindings) {
++            console.error(`  [${f.severity.toUpperCase()}] ${f.message}\n  \u2192 ${f.remediation}`);
++          }
++        } else {
++          console.log(`harness-hub enable ${r.harnessId}: ${r.status}`);
++        }
++      }
++      exitCode = result.exitCode;
++    });
++
++  program.command('disable <harnesses...>').action((harnesses: string[]) => {
++    const repoRoot = findRepoRoot(process.cwd());
++    const harnessIds = parseHarnessIds(harnesses);
++    const result = disableHarnesses(repoRoot, harnessIds);
++    console.log(result.output);
++    exitCode = result.exitCode;
++  });
++
++  program.command('migrate <harness>').action((harness: string) => {
++    const repoRoot = findRepoRoot(process.cwd());
++    const [harnessId] = parseHarnessIds([harness]);
++    const result = migrateHarness(repoRoot, harnessId);
++    console.log(result.output);
++    exitCode = result.exitCode;
++  });
++
++  program.command('doctor').action(() => {
++    const repoRoot = findRepoRoot(process.cwd());
++    const result = runDoctorCommand(repoRoot);
++    console.log(result.output);
++    exitCode = result.exitCode;
++  });
++
++  try {
++    await program.parseAsync(argv, { from: 'user' });
++  } catch (err) {
++    if (err && typeof err === 'object' && 'code' in err) {
++      const code = (err as { code: string }).code;
++      if (code === 'commander.helpDisplayed' || code === 'commander.version') {
++        return 0;
++      }
++    }
++    if (err instanceof Error) console.error(err.message);
++    return exitCode || 1;
++  }
++
++  return exitCode;
++}
+diff --git a/src/commands/disable.test.ts b/src/commands/disable.test.ts
+new file mode 100644
+index 0000000..3691a07
+--- /dev/null
++++ b/src/commands/disable.test.ts
+@@ -0,0 +1,51 @@
++// src/commands/disable.test.ts
++import { describe, it, expect, beforeEach, afterEach } from 'vitest';
++import { mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync, existsSync, readFileSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import { parse as parseYaml } from 'yaml';
++import { disableHarnesses } from './disable';
++import { saveConfig } from '../config';
++
++describe('disableHarnesses', () => {
++  let repoRoot: string;
++  beforeEach(() => {
++    repoRoot = mkdtempSync(join(tmpdir(), 'hh-disable-'));
++  });
++  afterEach(() => {
++    rmSync(repoRoot, { recursive: true, force: true });
++  });
++
++  it('removes the claude-code symlinks but keeps canon skills intact', () => {
++    writeFileSync(join(repoRoot, 'AGENTS.md'), '# Agents\n');
++    mkdirSync(join(repoRoot, '.agents', 'skills', 'a'), { recursive: true });
++    writeFileSync(join(repoRoot, '.agents', 'skills', 'a', 'SKILL.md'), 'body');
++    symlinkSync('AGENTS.md', join(repoRoot, 'CLAUDE.md'));
++    mkdirSync(join(repoRoot, '.claude'), { recursive: true });
++    symlinkSync(join('..', '.agents', 'skills'), join(repoRoot, '.claude', 'skills'));
++    saveConfig(repoRoot, ['claude-code']);
++
++    disableHarnesses(repoRoot, ['claude-code']);
++
++    expect(existsSync(join(repoRoot, 'CLAUDE.md'))).toBe(false);
++    expect(existsSync(join(repoRoot, '.claude', 'skills'))).toBe(false);
++    expect(readFileSync(join(repoRoot, '.agents', 'skills', 'a', 'SKILL.md'), 'utf8')).toBe('body');
++  });
++
++  it('removes only the requested harness id from the config', () => {
++    saveConfig(repoRoot, ['claude-code', 'cursor']);
++    disableHarnesses(repoRoot, ['claude-code']);
++    const harnesses = (parseYaml(readFileSync(join(repoRoot, 'harness-hub.yaml'), 'utf8')) as { harnesses: string[] })
++      .harnesses;
++    expect(harnesses).toEqual(['cursor']);
++  });
++
++  it('is a no-op for a harness that was never enabled', () => {
++    saveConfig(repoRoot, ['cursor']);
++    const result = disableHarnesses(repoRoot, ['hermes']);
++    expect(result.exitCode).toBe(0);
++    const harnesses = (parseYaml(readFileSync(join(repoRoot, 'harness-hub.yaml'), 'utf8')) as { harnesses: string[] })
++      .harnesses;
++    expect(harnesses).toEqual(['cursor']);
++  });
++});
+diff --git a/src/commands/disable.ts b/src/commands/disable.ts
+new file mode 100644
+index 0000000..02ed925
+--- /dev/null
++++ b/src/commands/disable.ts
+@@ -0,0 +1,42 @@
++// src/commands/disable.ts
++import { existsSync, lstatSync, rmSync } from 'node:fs';
++import { join } from 'node:path';
++import { loadConfig, saveConfig } from '../config';
++import { getHarnessEntry } from '../registry';
++import type { HarnessId } from '../harnesses';
++
++export interface DisableCommandResult {
++  output: string;
++  exitCode: number;
++}
++
++function removeIfSymlink(path: string): void {
++  if (existsSync(path) && lstatSync(path).isSymbolicLink()) {
++    rmSync(path, { force: true });
++  }
++}
++
++export function disableHarnesses(repoRoot: string, harnessIds: HarnessId[]): DisableCommandResult {
++  const config = loadConfig(repoRoot);
++  const currentlyEnabled = config.status === 'ok' ? config.harnesses : [];
++  const remaining = currentlyEnabled.filter((id) => !harnessIds.includes(id));
++
++  for (const harnessId of harnessIds) {
++    const entry = getHarnessEntry(harnessId);
++    if (entry.agentsDoc.mode === 'symlink' && entry.agentsDoc.symlinkPath) {
++      removeIfSymlink(join(repoRoot, entry.agentsDoc.symlinkPath));
++    }
++    if (entry.skills.mode === 'migrate-symlink' && entry.skills.symlinkPath) {
++      removeIfSymlink(join(repoRoot, entry.skills.symlinkPath));
++    }
++  }
++
++  if (remaining.length !== currentlyEnabled.length) {
++    saveConfig(repoRoot, remaining);
++  }
++
++  return {
++    output: `harness-hub disable: ${harnessIds.join(', ')} disabled.`,
++    exitCode: 0,
++  };
++}
+diff --git a/src/commands/doctor.test.ts b/src/commands/doctor.test.ts
+new file mode 100644
+index 0000000..7f8ec2a
+--- /dev/null
++++ b/src/commands/doctor.test.ts
+@@ -0,0 +1,29 @@
++// src/commands/doctor.test.ts
++import { describe, it, expect, beforeEach, afterEach } from 'vitest';
++import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import { runDoctorCommand } from './doctor';
++
++describe('runDoctorCommand', () => {
++  let repoRoot: string;
++  beforeEach(() => {
++    repoRoot = mkdtempSync(join(tmpdir(), 'hh-doctorcmd-'));
++  });
++  afterEach(() => {
++    rmSync(repoRoot, { recursive: true, force: true });
++  });
++
++  it('exits non-zero when AGENTS.md is missing', () => {
++    const result = runDoctorCommand(repoRoot);
++    expect(result.exitCode).toBe(1);
++    expect(result.output).toContain('AGENTS.md');
++  });
++
++  it('exits zero for a minimal valid repo', () => {
++    writeFileSync(join(repoRoot, 'AGENTS.md'), '# Agents\n');
++    const result = runDoctorCommand(repoRoot);
++    expect(result.exitCode).toBe(0);
++    expect(result.output).toContain('no issues found');
++  });
++});
+diff --git a/src/commands/doctor.ts b/src/commands/doctor.ts
+new file mode 100644
+index 0000000..de4f116
+--- /dev/null
++++ b/src/commands/doctor.ts
+@@ -0,0 +1,27 @@
++// src/commands/doctor.ts
++import { buildDoctorContext } from '../doctor/context';
++import { runDoctor } from '../doctor/run';
++import { ALL_DOCTOR_RULES } from '../doctor/rules';
++import type { Finding } from '../doctor/types';
++
++export interface DoctorCommandResult {
++  findings: Finding[];
++  output: string;
++  exitCode: number;
++}
++
++export function formatFindings(findings: Finding[]): string {
++  if (findings.length === 0) {
++    return 'harness-hub doctor: no issues found.';
++  }
++  return findings
++    .map((f) => `[${f.severity.toUpperCase()}] (${f.ruleId}) ${f.message}\n  \u2192 ${f.remediation}`)
++    .join('\n');
++}
++
++export function runDoctorCommand(repoRoot: string, homeDir?: string): DoctorCommandResult {
++  const ctx = buildDoctorContext(repoRoot, [], homeDir);
++  const findings = runDoctor(ctx, ALL_DOCTOR_RULES);
++  const exitCode = findings.some((f) => f.severity === 'error') ? 1 : 0;
++  return { findings, output: formatFindings(findings), exitCode };
++}
+diff --git a/src/commands/enable.test.ts b/src/commands/enable.test.ts
+new file mode 100644
+index 0000000..c020ede
+--- /dev/null
++++ b/src/commands/enable.test.ts
+@@ -0,0 +1,139 @@
++// src/commands/enable.test.ts
++import { describe, it, expect, beforeEach, afterEach } from 'vitest';
++import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync, lstatSync, readlinkSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import { parse as parseYaml } from 'yaml';
++import { enableHarnesses } from './enable';
++
++function repoWithAgentsMd(): string {
++  const repoRoot = mkdtempSync(join(tmpdir(), 'hh-enable-'));
++  writeFileSync(join(repoRoot, 'AGENTS.md'), '# Agents\n');
++  return repoRoot;
++}
++
++function readConfiguredHarnesses(repoRoot: string): string[] {
++  const raw = readFileSync(join(repoRoot, 'harness-hub.yaml'), 'utf8');
++  return (parseYaml(raw) as { harnesses: string[] }).harnesses;
++}
++
++describe('enableHarnesses', () => {
++  let repoRoot: string;
++  let homeDir: string;
++
++  beforeEach(() => {
++    repoRoot = repoWithAgentsMd();
++    homeDir = mkdtempSync(join(tmpdir(), 'hh-home-'));
++  });
++
++  afterEach(() => {
++    rmSync(repoRoot, { recursive: true, force: true });
++    rmSync(homeDir, { recursive: true, force: true });
++  });
++
++  it('enables a native harness and writes the config', () => {
++    const result = enableHarnesses(repoRoot, ['cursor']);
++    expect(result.exitCode).toBe(0);
++    expect(result.results).toEqual([{ harnessId: 'cursor', status: 'enabled', blockingFindings: [] }]);
++    expect(readConfiguredHarnesses(repoRoot)).toEqual(['cursor']);
++  });
++
++  it('reports already-enabled without duplicating work', () => {
++    enableHarnesses(repoRoot, ['cursor']);
++    const result = enableHarnesses(repoRoot, ['cursor']);
++    expect(result.results).toEqual([{ harnessId: 'cursor', status: 'already-enabled', blockingFindings: [] }]);
++  });
++
++  it('wires claude-code from a clean repo', () => {
++    const result = enableHarnesses(repoRoot, ['claude-code']);
++    expect(result.exitCode).toBe(0);
++    expect(lstatSync(join(repoRoot, 'CLAUDE.md')).isSymbolicLink()).toBe(true);
++    expect(readlinkSync(join(repoRoot, 'CLAUDE.md'))).toBe('AGENTS.md');
++    expect(lstatSync(join(repoRoot, '.claude', 'skills')).isSymbolicLink()).toBe(true);
++    expect(readConfiguredHarnesses(repoRoot)).toEqual(['claude-code']);
++  });
++
++  it('blocks claude-code when .claude/skills has an unmigrated entry', () => {
++    mkdirSync(join(repoRoot, '.claude', 'skills', 'a'), { recursive: true });
++    writeFileSync(join(repoRoot, '.claude', 'skills', 'a', 'SKILL.md'), 'body');
++    const result = enableHarnesses(repoRoot, ['claude-code']);
++    expect(result.exitCode).toBe(1);
++    expect(result.results[0].status).toBe('blocked');
++    expect(result.results[0].blockingFindings[0].ruleId).toBe('unmigrated-skills');
++    expect(existsSync(join(repoRoot, 'harness-hub.yaml'))).toBe(false);
++  });
++
++  it('blocks claude-code on a skill-migration collision', () => {
++    mkdirSync(join(repoRoot, '.claude', 'skills', 'a'), { recursive: true });
++    mkdirSync(join(repoRoot, '.agents', 'skills', 'a'), { recursive: true });
++    writeFileSync(join(repoRoot, '.claude', 'skills', 'a', 'SKILL.md'), 'one');
++    // Canon side carries valid frontmatter so the canon-wide skill-frontmatter
++    // doctor rule doesn't fire; the body still differs ('one' vs 'two'), so the
++    // migration classification is a collision.
++    writeFileSync(join(repoRoot, '.agents', 'skills', 'a', 'SKILL.md'), '---\nname: a\ndescription: x\n---\ntwo');
++    const result = enableHarnesses(repoRoot, ['claude-code']);
++    expect(result.results[0].blockingFindings[0].ruleId).toBe('skill-migration-collision');
++  });
++
++  it('wires claude-code once every .claude/skills entry is already migrated (identical)', () => {
++    mkdirSync(join(repoRoot, '.claude', 'skills', 'a'), { recursive: true });
++    mkdirSync(join(repoRoot, '.agents', 'skills', 'a'), { recursive: true });
++    // Both sides carry identical valid frontmatter so the canon-wide
++    // skill-frontmatter doctor rule doesn't fire and the trees are
++    // byte-identical (migration already done).
++    writeFileSync(join(repoRoot, '.claude', 'skills', 'a', 'SKILL.md'), '---\nname: a\ndescription: x\n---\nsame');
++    writeFileSync(join(repoRoot, '.agents', 'skills', 'a', 'SKILL.md'), '---\nname: a\ndescription: x\n---\nsame');
++    const result = enableHarnesses(repoRoot, ['claude-code']);
++    expect(result.exitCode).toBe(0);
++    expect(lstatSync(join(repoRoot, '.claude', 'skills')).isSymbolicLink()).toBe(true);
++  });
++
++  it('blocks on a hand-written CLAUDE.md without --force', () => {
++    writeFileSync(join(repoRoot, 'CLAUDE.md'), '# hand-written\n');
++    const result = enableHarnesses(repoRoot, ['claude-code']);
++    expect(result.results[0].status).toBe('blocked');
++    expect(result.results[0].blockingFindings[0].ruleId).toBe('clobber-risk');
++  });
++
++  it('overwrites a hand-written CLAUDE.md with --force', () => {
++    writeFileSync(join(repoRoot, 'CLAUDE.md'), '# hand-written\n');
++    const result = enableHarnesses(repoRoot, ['claude-code'], { force: true });
++    expect(result.exitCode).toBe(0);
++    expect(lstatSync(join(repoRoot, 'CLAUDE.md')).isSymbolicLink()).toBe(true);
++  });
++
++  it('blocks every requested harness on a global error (missing AGENTS.md)', () => {
++    rmSync(join(repoRoot, 'AGENTS.md'));
++    const result = enableHarnesses(repoRoot, ['cursor', 'claude-code']);
++    expect(result.exitCode).toBe(1);
++    expect(result.results.every((r) => r.status === 'blocked')).toBe(true);
++    expect(existsSync(join(repoRoot, 'harness-hub.yaml'))).toBe(false);
++  });
++
++  it('blocks hermes when the repo is not trusted', () => {
++    // A missing ~/.hermes/config.yaml only warns ("can't verify"); a config
++    // that lists a different repo is a definitive hermes-trust error.
++    mkdirSync(join(homeDir, '.hermes'), { recursive: true });
++    writeFileSync(join(homeDir, '.hermes', 'config.yaml'), 'skills:\n  trusted_project_dirs:\n    - /some/other/repo\n');
++    const result = enableHarnesses(repoRoot, ['hermes'], { homeDir });
++    expect(result.results[0].status).toBe('blocked');
++    expect(result.results[0].blockingFindings[0].ruleId).toBe('hermes-trust');
++  });
++
++  it('enables hermes once the repo is trusted', () => {
++    mkdirSync(join(homeDir, '.hermes'), { recursive: true });
++    writeFileSync(join(homeDir, '.hermes', 'config.yaml'), `skills:\n  trusted_project_dirs:\n    - ${repoRoot}\n`);
++    const result = enableHarnesses(repoRoot, ['hermes'], { homeDir });
++    expect(result.exitCode).toBe(0);
++    expect(readConfiguredHarnesses(repoRoot)).toEqual(['hermes']);
++  });
++
++  it('processes multiple harnesses independently: one succeeds, one blocks', () => {
++    writeFileSync(join(repoRoot, 'CLAUDE.md'), '# hand-written\n');
++    const result = enableHarnesses(repoRoot, ['cursor', 'claude-code']);
++    expect(result.exitCode).toBe(1);
++    expect(result.results.find((r) => r.harnessId === 'cursor')?.status).toBe('enabled');
++    expect(result.results.find((r) => r.harnessId === 'claude-code')?.status).toBe('blocked');
++    expect(readConfiguredHarnesses(repoRoot)).toEqual(['cursor']);
++  });
++});
+diff --git a/src/commands/enable.ts b/src/commands/enable.ts
+new file mode 100644
+index 0000000..cb6e12d
+--- /dev/null
++++ b/src/commands/enable.ts
+@@ -0,0 +1,76 @@
++// src/commands/enable.ts
++import { buildDoctorContext } from '../doctor/context';
++import { runDoctor } from '../doctor/run';
++import { ALL_DOCTOR_RULES } from '../doctor/rules';
++import { loadConfig, saveConfig } from '../config';
++import { getHarnessEntry } from '../registry';
++import { wireMigrateSymlinkHarness } from '../wiring/migrateSymlink';
++import type { HarnessId } from '../harnesses';
++import type { Finding } from '../doctor/types';
++
++export interface EnableHarnessResult {
++  harnessId: HarnessId;
++  status: 'enabled' | 'already-enabled' | 'blocked';
++  blockingFindings: Finding[];
++}
++
++export interface EnableCommandResult {
++  results: EnableHarnessResult[];
++  exitCode: number;
++}
++
++export function enableHarnesses(
++  repoRoot: string,
++  harnessIds: HarnessId[],
++  options: { force?: boolean; homeDir?: string } = {}
++): EnableCommandResult {
++  const config = loadConfig(repoRoot);
++  const alreadyEnabled = config.status === 'ok' ? config.harnesses : [];
++  const toEnable = harnessIds.filter((id) => !alreadyEnabled.includes(id));
++
++  const ctx = buildDoctorContext(repoRoot, toEnable, options.homeDir);
++  const allFindings = runDoctor(ctx, ALL_DOCTOR_RULES);
++
++  // A canon-wide (no harnessId) blocking error stops every harness — nothing
++  // can safely wire without valid canon (Resolved Ambiguity #1/#2).
++  const globalBlocking = allFindings.filter((f) => f.harnessId === undefined && f.severity === 'error');
++  if (globalBlocking.length > 0) {
++    return {
++      results: harnessIds.map((harnessId) => ({ harnessId, status: 'blocked', blockingFindings: globalBlocking })),
++      exitCode: 1,
++    };
++  }
++
++  const results: EnableHarnessResult[] = [];
++  const newlyEnabled: HarnessId[] = [];
++
++  for (const harnessId of harnessIds) {
++    if (alreadyEnabled.includes(harnessId)) {
++      results.push({ harnessId, status: 'already-enabled', blockingFindings: [] });
++      continue;
++    }
++
++    const harnessFindings = allFindings.filter((f) => f.harnessId === harnessId);
++    const blocking = harnessFindings.filter((f) => f.severity === 'error' && (!f.forceable || !options.force));
++
++    if (blocking.length > 0) {
++      results.push({ harnessId, status: 'blocked', blockingFindings: blocking });
++      continue;
++    }
++
++    const entry = getHarnessEntry(harnessId);
++    if (entry.agentsDoc.mode === 'symlink' || entry.skills.mode === 'migrate-symlink') {
++      wireMigrateSymlinkHarness(repoRoot, entry);
++    }
++
++    newlyEnabled.push(harnessId);
++    results.push({ harnessId, status: 'enabled', blockingFindings: [] });
++  }
++
++  if (newlyEnabled.length > 0) {
++    saveConfig(repoRoot, [...alreadyEnabled, ...newlyEnabled]);
++  }
++
++  const exitCode = results.some((r) => r.status === 'blocked') ? 1 : 0;
++  return { results, exitCode };
++}
+diff --git a/src/commands/migrate.test.ts b/src/commands/migrate.test.ts
+new file mode 100644
+index 0000000..b668a52
+--- /dev/null
++++ b/src/commands/migrate.test.ts
+@@ -0,0 +1,55 @@
++// src/commands/migrate.test.ts
++import { describe, it, expect, beforeEach, afterEach } from 'vitest';
++import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import { migrateHarness } from './migrate';
++
++describe('migrateHarness', () => {
++  let repoRoot: string;
++  beforeEach(() => {
++    repoRoot = mkdtempSync(join(tmpdir(), 'hh-migrate-'));
++  });
++  afterEach(() => {
++    rmSync(repoRoot, { recursive: true, force: true });
++  });
++
++  it('errors for any harness other than claude-code', () => {
++    const result = migrateHarness(repoRoot, 'cursor');
++    expect(result.exitCode).toBe(1);
++    expect(result.output).toContain('cursor');
++  });
++
++  it('reports nothing to migrate when .claude/skills is empty or absent', () => {
++    const result = migrateHarness(repoRoot, 'claude-code');
++    expect(result.exitCode).toBe(0);
++    expect(result.output).toContain('nothing to migrate');
++  });
++
++  it('copies a new skill into canon without touching .claude/skills', () => {
++    mkdirSync(join(repoRoot, '.claude', 'skills', 'a'), { recursive: true });
++    writeFileSync(join(repoRoot, '.claude', 'skills', 'a', 'SKILL.md'), 'body');
++    const result = migrateHarness(repoRoot, 'claude-code');
++    expect(result.exitCode).toBe(0);
++    expect(readFileSync(join(repoRoot, '.agents', 'skills', 'a', 'SKILL.md'), 'utf8')).toBe('body');
++    expect(existsSync(join(repoRoot, '.claude', 'skills', 'a', 'SKILL.md'))).toBe(true);
++  });
++
++  it('errors on a collision without copying anything', () => {
++    mkdirSync(join(repoRoot, '.claude', 'skills', 'a'), { recursive: true });
++    mkdirSync(join(repoRoot, '.agents', 'skills', 'a'), { recursive: true });
++    writeFileSync(join(repoRoot, '.claude', 'skills', 'a', 'SKILL.md'), 'one');
++    writeFileSync(join(repoRoot, '.agents', 'skills', 'a', 'SKILL.md'), 'two');
++    const result = migrateHarness(repoRoot, 'claude-code');
++    expect(result.exitCode).toBe(1);
++    expect(readFileSync(join(repoRoot, '.agents', 'skills', 'a', 'SKILL.md'), 'utf8')).toBe('two');
++  });
++
++  it('is a no-op the second time it runs', () => {
++    mkdirSync(join(repoRoot, '.claude', 'skills', 'a'), { recursive: true });
++    writeFileSync(join(repoRoot, '.claude', 'skills', 'a', 'SKILL.md'), 'body');
++    migrateHarness(repoRoot, 'claude-code');
++    const second = migrateHarness(repoRoot, 'claude-code');
++    expect(second.output).toContain('nothing to migrate');
++  });
++});
+diff --git a/src/commands/migrate.ts b/src/commands/migrate.ts
+new file mode 100644
+index 0000000..18c39a0
+--- /dev/null
++++ b/src/commands/migrate.ts
+@@ -0,0 +1,47 @@
++// src/commands/migrate.ts
++import { copyDirRecursive } from '../fsutil';
++import { planSkillMigration } from '../skills/skillMigrationPlan';
++import { getHarnessEntry } from '../registry';
++import type { HarnessId } from '../harnesses';
++
++export interface MigrateCommandResult {
++  output: string;
++  exitCode: number;
++}
++
++export function migrateHarness(repoRoot: string, harnessId: HarnessId): MigrateCommandResult {
++  const entry = getHarnessEntry(harnessId);
++  if (entry.skills.mode !== 'migrate-symlink') {
++    return {
++      output: `harness-hub migrate: nothing to do for "${harnessId}" — it reads canon natively with no pre-existing content to adopt in this deliverable.`,
++      exitCode: 1,
++    };
++  }
++
++  const plan = planSkillMigration(repoRoot, entry);
++
++  const collisions = plan.filter((e) => e.classification === 'collision');
++  if (collisions.length > 0) {
++    const lines = collisions.map(
++      (e) => `  ${entry.skills.symlinkPath}/${e.name}/SKILL.md differs from .agents/skills/${e.name}/SKILL.md`
++    );
++    return {
++      output: `harness-hub migrate: skill migration collision(s), fix by hand and re-run:\n${lines.join('\n')}`,
++      exitCode: 1,
++    };
++  }
++
++  const toCopy = plan.filter((e) => e.classification === 'new');
++  if (toCopy.length === 0) {
++    return { output: 'harness-hub migrate: nothing to migrate.', exitCode: 0 };
++  }
++
++  for (const planEntry of toCopy) {
++    copyDirRecursive(planEntry.harnessSkillPath, planEntry.canonSkillPath);
++  }
++
++  return {
++    output: `harness-hub migrate: adopted ${toCopy.length} skill(s) into canon: ${toCopy.map((e) => e.name).join(', ')}`,
++    exitCode: 0,
++  };
++}
+diff --git a/src/config.test.ts b/src/config.test.ts
+new file mode 100644
+index 0000000..99efa6b
+--- /dev/null
++++ b/src/config.test.ts
+@@ -0,0 +1,82 @@
++import { describe, it, expect, beforeEach, afterEach } from 'vitest';
++import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import { loadConfig, saveConfig, YAML_CONFIG_FILENAME, JSON_CONFIG_FILENAME } from './config';
++
++describe('config', () => {
++  let repoRoot: string;
++
++  beforeEach(() => {
++    repoRoot = mkdtempSync(join(tmpdir(), 'hh-config-'));
++  });
++
++  afterEach(() => {
++    rmSync(repoRoot, { recursive: true, force: true });
++  });
++
++  it('reports absent when neither config file exists', () => {
++    expect(loadConfig(repoRoot)).toEqual({ status: 'absent' });
++  });
++
++  it('reports ambiguous when both files exist', () => {
++    writeFileSync(join(repoRoot, YAML_CONFIG_FILENAME), 'harnesses: []\n');
++    writeFileSync(join(repoRoot, JSON_CONFIG_FILENAME), '{"harnesses": []}');
++    expect(loadConfig(repoRoot).status).toBe('ambiguous');
++  });
++
++  it('loads a valid yaml config', () => {
++    writeFileSync(join(repoRoot, YAML_CONFIG_FILENAME), 'harnesses:\n  - claude-code\n  - cursor\n');
++    expect(loadConfig(repoRoot)).toEqual({
++      status: 'ok',
++      format: 'yaml',
++      path: join(repoRoot, YAML_CONFIG_FILENAME),
++      harnesses: ['claude-code', 'cursor'],
++      unknownIds: [],
++    });
++  });
++
++  it('loads a valid json config', () => {
++    writeFileSync(join(repoRoot, JSON_CONFIG_FILENAME), JSON.stringify({ harnesses: ['hermes'] }));
++    expect(loadConfig(repoRoot)).toEqual({
++      status: 'ok',
++      format: 'json',
++      path: join(repoRoot, JSON_CONFIG_FILENAME),
++      harnesses: ['hermes'],
++      unknownIds: [],
++    });
++  });
++
++  it('reports parse-error on malformed yaml', () => {
++    writeFileSync(join(repoRoot, YAML_CONFIG_FILENAME), 'harnesses: [\n');
++    expect(loadConfig(repoRoot).status).toBe('parse-error');
++  });
++
++  it('reports invalid-shape when harnesses is not an array', () => {
++    writeFileSync(join(repoRoot, YAML_CONFIG_FILENAME), 'harnesses: "claude-code"\n');
++    expect(loadConfig(repoRoot).status).toBe('invalid-shape');
++  });
++
++  it('collects unrecognized harness ids separately from valid ones', () => {
++    writeFileSync(join(repoRoot, YAML_CONFIG_FILENAME), 'harnesses:\n  - claude-code\n  - not-a-real-harness\n');
++    expect(loadConfig(repoRoot)).toMatchObject({
++      status: 'ok',
++      harnesses: ['claude-code'],
++      unknownIds: ['not-a-real-harness'],
++    });
++  });
++
++  it('saveConfig creates harness-hub.yaml by default', () => {
++    saveConfig(repoRoot, ['cursor']);
++    expect(existsSync(join(repoRoot, YAML_CONFIG_FILENAME))).toBe(true);
++    expect(existsSync(join(repoRoot, JSON_CONFIG_FILENAME))).toBe(false);
++  });
++
++  it('saveConfig writes json when only a json config already existed', () => {
++    writeFileSync(join(repoRoot, JSON_CONFIG_FILENAME), JSON.stringify({ harnesses: [] }));
++    saveConfig(repoRoot, ['codex']);
++    const written = JSON.parse(readFileSync(join(repoRoot, JSON_CONFIG_FILENAME), 'utf8'));
++    expect(written).toEqual({ harnesses: ['codex'] });
++    expect(existsSync(join(repoRoot, YAML_CONFIG_FILENAME))).toBe(false);
++  });
++});
+diff --git a/src/config.ts b/src/config.ts
+new file mode 100644
+index 0000000..eb605d1
+--- /dev/null
++++ b/src/config.ts
+@@ -0,0 +1,76 @@
++import { existsSync, readFileSync, writeFileSync } from 'node:fs';
++import { join } from 'node:path';
++import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
++import { ALL_HARNESS_IDS, isHarnessId, type HarnessId } from './harnesses';
++
++export const YAML_CONFIG_FILENAME = 'harness-hub.yaml';
++export const JSON_CONFIG_FILENAME = 'harness-hub.json';
++
++export type ConfigFormat = 'yaml' | 'json';
++
++export type ConfigLoadResult =
++  | { status: 'absent' }
++  | { status: 'ambiguous'; yamlPath: string; jsonPath: string }
++  | { status: 'parse-error'; format: ConfigFormat; path: string; error: string }
++  | { status: 'invalid-shape'; format: ConfigFormat; path: string; reason: string }
++  | { status: 'ok'; format: ConfigFormat; path: string; harnesses: HarnessId[]; unknownIds: string[] };
++
++export function loadConfig(repoRoot: string): ConfigLoadResult {
++  const yamlPath = join(repoRoot, YAML_CONFIG_FILENAME);
++  const jsonPath = join(repoRoot, JSON_CONFIG_FILENAME);
++  const yamlExists = existsSync(yamlPath);
++  const jsonExists = existsSync(jsonPath);
++
++  if (yamlExists && jsonExists) {
++    return { status: 'ambiguous', yamlPath, jsonPath };
++  }
++  if (!yamlExists && !jsonExists) {
++    return { status: 'absent' };
++  }
++
++  const format: ConfigFormat = yamlExists ? 'yaml' : 'json';
++  const path = yamlExists ? yamlPath : jsonPath;
++  const raw = readFileSync(path, 'utf8');
++
++  let parsed: unknown;
++  try {
++    parsed = format === 'yaml' ? parseYaml(raw) : JSON.parse(raw);
++  } catch (err) {
++    return { status: 'parse-error', format, path, error: err instanceof Error ? err.message : String(err) };
++  }
++
++  if (
++    typeof parsed !== 'object' ||
++    parsed === null ||
++    !('harnesses' in parsed) ||
++    !Array.isArray((parsed as { harnesses: unknown }).harnesses)
++  ) {
++    return { status: 'invalid-shape', format, path, reason: '"harnesses" must be an array' };
++  }
++
++  const rawHarnesses = (parsed as { harnesses: unknown[] }).harnesses;
++  const harnesses: HarnessId[] = [];
++  const unknownIds: string[] = [];
++  for (const entry of rawHarnesses) {
++    if (typeof entry === 'string' && isHarnessId(entry)) {
++      harnesses.push(entry);
++    } else {
++      unknownIds.push(String(entry));
++    }
++  }
++
++  return { status: 'ok', format, path, harnesses, unknownIds };
++}
++
++export function saveConfig(repoRoot: string, harnesses: HarnessId[]): void {
++  const yamlPath = join(repoRoot, YAML_CONFIG_FILENAME);
++  const jsonPath = join(repoRoot, JSON_CONFIG_FILENAME);
++  const format: ConfigFormat = existsSync(jsonPath) && !existsSync(yamlPath) ? 'json' : 'yaml';
++  const sorted = [...harnesses].sort((a, b) => ALL_HARNESS_IDS.indexOf(a) - ALL_HARNESS_IDS.indexOf(b));
++
++  if (format === 'json') {
++    writeFileSync(jsonPath, JSON.stringify({ harnesses: sorted }, null, 2) + '\n', 'utf8');
++  } else {
++    writeFileSync(yamlPath, stringifyYaml({ harnesses: sorted }), 'utf8');
++  }
++}
+diff --git a/src/doctor/context.test.ts b/src/doctor/context.test.ts
+new file mode 100644
+index 0000000..4a39444
+--- /dev/null
++++ b/src/doctor/context.test.ts
+@@ -0,0 +1,30 @@
++import { describe, it, expect, beforeEach, afterEach } from 'vitest';
++import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import { buildDoctorContext } from './context';
++
++describe('buildDoctorContext', () => {
++  let repoRoot: string;
++  beforeEach(() => {
++    repoRoot = mkdtempSync(join(tmpdir(), 'hh-ctx-'));
++  });
++  afterEach(() => {
++    rmSync(repoRoot, { recursive: true, force: true });
++  });
++
++  it('defaults to an empty configuredHarnesses/pendingHarnesses when no config exists', () => {
++    const ctx = buildDoctorContext(repoRoot);
++    expect(ctx.configuredHarnesses).toEqual([]);
++    expect(ctx.pendingHarnesses).toEqual([]);
++    expect(ctx.homeDir).toBeTruthy();
++  });
++
++  it('reads configuredHarnesses from an existing config and accepts explicit pendingHarnesses/homeDir', () => {
++    writeFileSync(join(repoRoot, 'harness-hub.yaml'), 'harnesses:\n  - cursor\n');
++    const ctx = buildDoctorContext(repoRoot, ['hermes'], '/fake/home');
++    expect(ctx.configuredHarnesses).toEqual(['cursor']);
++    expect(ctx.pendingHarnesses).toEqual(['hermes']);
++    expect(ctx.homeDir).toBe('/fake/home');
++  });
++});
+diff --git a/src/doctor/context.ts b/src/doctor/context.ts
+new file mode 100644
+index 0000000..26ff9f7
+--- /dev/null
++++ b/src/doctor/context.ts
+@@ -0,0 +1,14 @@
++import { homedir } from 'node:os';
++import { loadConfig } from '../config';
++import type { HarnessId } from '../harnesses';
++import type { DoctorContext } from './types';
++
++export function buildDoctorContext(
++  repoRoot: string,
++  pendingHarnesses: HarnessId[] = [],
++  homeDir: string = homedir()
++): DoctorContext {
++  const config = loadConfig(repoRoot);
++  const configuredHarnesses = config.status === 'ok' ? config.harnesses : [];
++  return { repoRoot, homeDir, config, configuredHarnesses, pendingHarnesses };
++}
+diff --git a/src/doctor/rules/canonPresence.test.ts b/src/doctor/rules/canonPresence.test.ts
+new file mode 100644
+index 0000000..c5e3067
+--- /dev/null
++++ b/src/doctor/rules/canonPresence.test.ts
+@@ -0,0 +1,31 @@
++import { describe, it, expect, beforeEach, afterEach } from 'vitest';
++import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import { canonPresenceRule } from './canonPresence';
++import type { DoctorContext } from '../types';
++
++function makeCtx(repoRoot: string): DoctorContext {
++  return { repoRoot, homeDir: '/home/user', config: { status: 'absent' }, configuredHarnesses: [], pendingHarnesses: [] };
++}
++
++describe('canonPresenceRule', () => {
++  let repoRoot: string;
++  beforeEach(() => {
++    repoRoot = mkdtempSync(join(tmpdir(), 'hh-canonpresence-'));
++  });
++  afterEach(() => {
++    rmSync(repoRoot, { recursive: true, force: true });
++  });
++
++  it('reports an error when AGENTS.md is missing', () => {
++    const findings = canonPresenceRule.check(makeCtx(repoRoot));
++    expect(findings).toHaveLength(1);
++    expect(findings[0].severity).toBe('error');
++  });
++
++  it('reports nothing when AGENTS.md exists', () => {
++    writeFileSync(join(repoRoot, 'AGENTS.md'), '# Agents\n');
++    expect(canonPresenceRule.check(makeCtx(repoRoot))).toEqual([]);
++  });
++});
+diff --git a/src/doctor/rules/canonPresence.ts b/src/doctor/rules/canonPresence.ts
+new file mode 100644
+index 0000000..29360a1
+--- /dev/null
++++ b/src/doctor/rules/canonPresence.ts
+@@ -0,0 +1,19 @@
++import { hasAgentsMd } from '../../canon';
++import type { DoctorRule } from '../types';
++
++export const canonPresenceRule: DoctorRule = {
++  id: 'canon-presence',
++  applies: () => true,
++  check: (ctx) => {
++    if (hasAgentsMd(ctx.repoRoot)) return [];
++    return [
++      {
++        ruleId: 'canon-presence',
++        severity: 'error',
++        message: 'AGENTS.md is missing at the repo root.',
++        remediation: 'Create AGENTS.md at the repo root — harness-hub never scaffolds it for you.',
++        forceable: false,
++      },
++    ];
++  },
++};
+diff --git a/src/doctor/rules/clobberRisk.test.ts b/src/doctor/rules/clobberRisk.test.ts
+new file mode 100644
+index 0000000..0df77ef
+--- /dev/null
++++ b/src/doctor/rules/clobberRisk.test.ts
+@@ -0,0 +1,53 @@
++import { describe, it, expect, beforeEach, afterEach } from 'vitest';
++import { mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import { clobberRiskRule } from './clobberRisk';
++import type { DoctorContext } from '../types';
++
++function makeCtx(repoRoot: string, pendingHarnesses: DoctorContext['pendingHarnesses'] = []): DoctorContext {
++  return { repoRoot, homeDir: '/home/user', config: { status: 'absent' }, configuredHarnesses: [], pendingHarnesses };
++}
++
++describe('clobberRiskRule', () => {
++  let repoRoot: string;
++  beforeEach(() => {
++    repoRoot = mkdtempSync(join(tmpdir(), 'hh-clobber-'));
++  });
++  afterEach(() => {
++    rmSync(repoRoot, { recursive: true, force: true });
++  });
++
++  it('does not apply when claude-code is not configured or pending', () => {
++    expect(clobberRiskRule.applies(makeCtx(repoRoot))).toBe(false);
++  });
++
++  it('applies when claude-code is pending', () => {
++    expect(clobberRiskRule.applies(makeCtx(repoRoot, ['claude-code']))).toBe(true);
++  });
++
++  it('passes when CLAUDE.md is the expected symlink', () => {
++    writeFileSync(join(repoRoot, 'AGENTS.md'), '# Agents\n');
++    symlinkSync('AGENTS.md', join(repoRoot, 'CLAUDE.md'));
++    expect(clobberRiskRule.check(makeCtx(repoRoot, ['claude-code']))).toEqual([]);
++  });
++
++  it('flags a hand-written CLAUDE.md', () => {
++    writeFileSync(join(repoRoot, 'CLAUDE.md'), '# hand-written\n');
++    const findings = clobberRiskRule.check(makeCtx(repoRoot, ['claude-code']));
++    expect(findings.some((f) => f.message.includes('CLAUDE.md'))).toBe(true);
++    expect(findings.every((f) => f.forceable)).toBe(true);
++  });
++
++  it('flags a .claude/skills symlink pointing elsewhere', () => {
++    mkdirSync(join(repoRoot, '.claude'), { recursive: true });
++    symlinkSync('/somewhere/else', join(repoRoot, '.claude', 'skills'));
++    const findings = clobberRiskRule.check(makeCtx(repoRoot, ['claude-code']));
++    expect(findings.some((f) => f.message.includes('.claude/skills'))).toBe(true);
++  });
++
++  it('does not flag .claude/skills when it is a real directory (handled by the skill-migration rule instead)', () => {
++    mkdirSync(join(repoRoot, '.claude', 'skills'), { recursive: true });
++    expect(clobberRiskRule.check(makeCtx(repoRoot, ['claude-code']))).toEqual([]);
++  });
++});
+diff --git a/src/doctor/rules/clobberRisk.ts b/src/doctor/rules/clobberRisk.ts
+new file mode 100644
+index 0000000..0f3fc87
+--- /dev/null
++++ b/src/doctor/rules/clobberRisk.ts
+@@ -0,0 +1,72 @@
++import { lstatSync } from 'node:fs';
++import { join } from 'node:path';
++import { isSymlinkTo, relativeSymlinkTarget } from '../../fsutil';
++import { skillsRootDir, AGENTS_MD_FILENAME } from '../../canon';
++import { ALL_HARNESS_IDS } from '../../harnesses';
++import { getHarnessEntry } from '../../registry';
++import type { DoctorRule, Finding } from '../types';
++
++function isRelevant(ctx: Parameters<DoctorRule['check']>[0], id: (typeof ALL_HARNESS_IDS)[number]): boolean {
++  return ctx.configuredHarnesses.includes(id) || ctx.pendingHarnesses.includes(id);
++}
++
++/**
++ * True when a directory entry exists at `linkPath`, including a dangling
++ * symlink. existsSync is wrong here: it follows symlinks, so a foreign
++ * dangling link would be silently skipped instead of flagged.
++ */
++function pathPresent(linkPath: string): boolean {
++  try {
++    lstatSync(linkPath);
++    return true;
++  } catch {
++    return false;
++  }
++}
++
++export const clobberRiskRule: DoctorRule = {
++  id: 'clobber-risk',
++  applies: (ctx) =>
++    ALL_HARNESS_IDS.some((id) => {
++      const entry = getHarnessEntry(id);
++      return isRelevant(ctx, id) && (entry.agentsDoc.mode === 'symlink' || entry.skills.mode === 'migrate-symlink');
++    }),
++  check: (ctx) => {
++    const findings: Finding[] = [];
++    for (const id of ALL_HARNESS_IDS) {
++      if (!isRelevant(ctx, id)) continue;
++      const entry = getHarnessEntry(id);
++
++      if (entry.agentsDoc.mode === 'symlink' && entry.agentsDoc.symlinkPath) {
++        const linkPath = join(ctx.repoRoot, entry.agentsDoc.symlinkPath);
++        const target = relativeSymlinkTarget(ctx.repoRoot, entry.agentsDoc.symlinkPath, join(ctx.repoRoot, AGENTS_MD_FILENAME));
++        if (pathPresent(linkPath) && !isSymlinkTo(linkPath, target)) {
++          findings.push({
++            ruleId: 'clobber-risk',
++            severity: 'error',
++            message: `${entry.agentsDoc.symlinkPath} exists and is not a symlink to AGENTS.md.`,
++            remediation: `Remove or back up ${entry.agentsDoc.symlinkPath}, or re-run enable with --force to replace it.`,
++            harnessId: id,
++            forceable: true,
++          });
++        }
++      }
++
++      if (entry.skills.mode === 'migrate-symlink' && entry.skills.symlinkPath) {
++        const linkPath = join(ctx.repoRoot, entry.skills.symlinkPath);
++        const target = relativeSymlinkTarget(ctx.repoRoot, entry.skills.symlinkPath, skillsRootDir(ctx.repoRoot));
++        if (pathPresent(linkPath) && lstatSync(linkPath).isSymbolicLink() && !isSymlinkTo(linkPath, target)) {
++          findings.push({
++            ruleId: 'clobber-risk',
++            severity: 'error',
++            message: `${entry.skills.symlinkPath} is a symlink, but not to .agents/skills.`,
++            remediation: `Remove the existing ${entry.skills.symlinkPath} symlink, or re-run enable with --force to replace it.`,
++            harnessId: id,
++            forceable: true,
++          });
++        }
++      }
++    }
++    return findings;
++  },
++};
+diff --git a/src/doctor/rules/configValidity.test.ts b/src/doctor/rules/configValidity.test.ts
+new file mode 100644
+index 0000000..8b911a6
+--- /dev/null
++++ b/src/doctor/rules/configValidity.test.ts
+@@ -0,0 +1,43 @@
++import { describe, it, expect } from 'vitest';
++import { configValidityRule } from './configValidity';
++import type { DoctorContext } from '../types';
++
++function makeCtx(config: DoctorContext['config']): DoctorContext {
++  return { repoRoot: '/repo', homeDir: '/home/user', config, configuredHarnesses: [], pendingHarnesses: [] };
++}
++
++describe('configValidityRule', () => {
++  it('passes when config is absent', () => {
++    expect(configValidityRule.check(makeCtx({ status: 'absent' }))).toEqual([]);
++  });
++
++  it('passes for a valid config with no unknown ids', () => {
++    const ctx = makeCtx({ status: 'ok', format: 'yaml', path: '/repo/harness-hub.yaml', harnesses: ['cursor'], unknownIds: [] });
++    expect(configValidityRule.check(ctx)).toEqual([]);
++  });
++
++  it('flags unknown harness ids in an otherwise-valid config', () => {
++    const ctx = makeCtx({ status: 'ok', format: 'yaml', path: '/repo/harness-hub.yaml', harnesses: [], unknownIds: ['bogus'] });
++    expect(configValidityRule.check(ctx)[0].severity).toBe('error');
++  });
++
++  it('flags ambiguous config (both files present)', () => {
++    const ctx = makeCtx({ status: 'ambiguous', yamlPath: '/repo/harness-hub.yaml', jsonPath: '/repo/harness-hub.json' });
++    expect(configValidityRule.check(ctx)[0].severity).toBe('error');
++  });
++
++  it('flags a parse error', () => {
++    const ctx = makeCtx({ status: 'parse-error', format: 'yaml', path: '/repo/harness-hub.yaml', error: 'bad yaml' });
++    expect(configValidityRule.check(ctx)[0].message).toContain('bad yaml');
++  });
++
++  it('flags an invalid shape', () => {
++    const ctx = makeCtx({
++      status: 'invalid-shape',
++      format: 'yaml',
++      path: '/repo/harness-hub.yaml',
++      reason: '"harnesses" must be an array',
++    });
++    expect(configValidityRule.check(ctx)[0].severity).toBe('error');
++  });
++});
+diff --git a/src/doctor/rules/configValidity.ts b/src/doctor/rules/configValidity.ts
+new file mode 100644
+index 0000000..b4fc178
+--- /dev/null
++++ b/src/doctor/rules/configValidity.ts
+@@ -0,0 +1,54 @@
++import type { DoctorRule } from '../types';
++
++export const configValidityRule: DoctorRule = {
++  id: 'config-validity',
++  applies: () => true,
++  check: (ctx) => {
++    const { config } = ctx;
++    switch (config.status) {
++      case 'absent':
++        return [];
++      case 'ok':
++        if (config.unknownIds.length === 0) return [];
++        return [
++          {
++            ruleId: 'config-validity',
++            severity: 'error',
++            message: `${config.path} lists unrecognized harness id(s): ${config.unknownIds.join(', ')}`,
++            remediation: 'Remove or fix the unrecognized id(s) in the "harnesses" list.',
++            forceable: false,
++          },
++        ];
++      case 'ambiguous':
++        return [
++          {
++            ruleId: 'config-validity',
++            severity: 'error',
++            message: `Both ${config.yamlPath} and ${config.jsonPath} exist.`,
++            remediation: 'Keep exactly one of harness-hub.yaml / harness-hub.json and delete the other.',
++            forceable: false,
++          },
++        ];
++      case 'parse-error':
++        return [
++          {
++            ruleId: 'config-validity',
++            severity: 'error',
++            message: `${config.path} could not be parsed: ${config.error}`,
++            remediation: `Fix the syntax error in ${config.path}.`,
++            forceable: false,
++          },
++        ];
++      case 'invalid-shape':
++        return [
++          {
++            ruleId: 'config-validity',
++            severity: 'error',
++            message: `${config.path} is invalid: ${config.reason}`,
++            remediation: `Fix ${config.path} so it has a top-level "harnesses" array.`,
++            forceable: false,
++          },
++        ];
++    }
++  },
++};
+diff --git a/src/doctor/rules/generatedFileDrift.test.ts b/src/doctor/rules/generatedFileDrift.test.ts
+new file mode 100644
+index 0000000..0443a1f
+--- /dev/null
++++ b/src/doctor/rules/generatedFileDrift.test.ts
+@@ -0,0 +1,39 @@
++import { describe, it, expect, beforeEach, afterEach } from 'vitest';
++import { mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import { generatedFileDriftRule } from './generatedFileDrift';
++import type { DoctorContext } from '../types';
++
++function makeCtx(repoRoot: string, configuredHarnesses: DoctorContext['configuredHarnesses'] = ['claude-code']): DoctorContext {
++  return { repoRoot, homeDir: '/home/user', config: { status: 'absent' }, configuredHarnesses, pendingHarnesses: [] };
++}
++
++describe('generatedFileDriftRule', () => {
++  let repoRoot: string;
++  beforeEach(() => {
++    repoRoot = mkdtempSync(join(tmpdir(), 'hh-drift-'));
++  });
++  afterEach(() => {
++    rmSync(repoRoot, { recursive: true, force: true });
++  });
++
++  it('does not apply when claude-code is not configured', () => {
++    expect(generatedFileDriftRule.applies(makeCtx(repoRoot, []))).toBe(false);
++  });
++
++  it('warns when the symlinks are missing', () => {
++    expect(generatedFileDriftRule.check(makeCtx(repoRoot))).toEqual([
++      expect.objectContaining({ ruleId: 'generated-file-drift', severity: 'warning', harnessId: 'claude-code' }),
++    ]);
++  });
++
++  it('passes when both symlinks are correct', () => {
++    writeFileSync(join(repoRoot, 'AGENTS.md'), '# Agents\n');
++    symlinkSync('AGENTS.md', join(repoRoot, 'CLAUDE.md'));
++    mkdirSync(join(repoRoot, '.agents', 'skills'), { recursive: true });
++    mkdirSync(join(repoRoot, '.claude'), { recursive: true });
++    symlinkSync(join('..', '.agents', 'skills'), join(repoRoot, '.claude', 'skills'));
++    expect(generatedFileDriftRule.check(makeCtx(repoRoot))).toEqual([]);
++  });
++});
+diff --git a/src/doctor/rules/generatedFileDrift.ts b/src/doctor/rules/generatedFileDrift.ts
+new file mode 100644
+index 0000000..ea96d3e
+--- /dev/null
++++ b/src/doctor/rules/generatedFileDrift.ts
+@@ -0,0 +1,46 @@
++import { join } from 'node:path';
++import { isSymlinkTo, relativeSymlinkTarget } from '../../fsutil';
++import { skillsRootDir, AGENTS_MD_FILENAME } from '../../canon';
++import { ALL_HARNESS_IDS } from '../../harnesses';
++import { getHarnessEntry } from '../../registry';
++import type { DoctorRule, Finding } from '../types';
++
++export const generatedFileDriftRule: DoctorRule = {
++  id: 'generated-file-drift',
++  applies: (ctx) =>
++    ALL_HARNESS_IDS.some((id) => {
++      const entry = getHarnessEntry(id);
++      return ctx.configuredHarnesses.includes(id) && (entry.agentsDoc.mode === 'symlink' || entry.skills.mode === 'migrate-symlink');
++    }),
++  check: (ctx) => {
++    const findings: Finding[] = [];
++    for (const id of ALL_HARNESS_IDS) {
++      if (!ctx.configuredHarnesses.includes(id)) continue;
++      const entry = getHarnessEntry(id);
++      const problems: string[] = [];
++
++      if (entry.agentsDoc.mode === 'symlink' && entry.agentsDoc.symlinkPath) {
++        const linkPath = join(ctx.repoRoot, entry.agentsDoc.symlinkPath);
++        const target = relativeSymlinkTarget(ctx.repoRoot, entry.agentsDoc.symlinkPath, join(ctx.repoRoot, AGENTS_MD_FILENAME));
++        if (!isSymlinkTo(linkPath, target)) problems.push(entry.agentsDoc.symlinkPath);
++      }
++      if (entry.skills.mode === 'migrate-symlink' && entry.skills.symlinkPath) {
++        const linkPath = join(ctx.repoRoot, entry.skills.symlinkPath);
++        const target = relativeSymlinkTarget(ctx.repoRoot, entry.skills.symlinkPath, skillsRootDir(ctx.repoRoot));
++        if (!isSymlinkTo(linkPath, target)) problems.push(entry.skills.symlinkPath);
++      }
++
++      if (problems.length > 0) {
++        findings.push({
++          ruleId: 'generated-file-drift',
++          severity: 'warning',
++          message: `${id} is enabled, but ${problems.join(' and ')} ${problems.length > 1 ? 'are' : 'is'} missing or not the expected symlink.`,
++          remediation: `Re-run \`harness-hub enable ${id}\` to restore the expected symlink(s).`,
++          harnessId: id,
++          forceable: false,
++        });
++      }
++    }
++    return findings;
++  },
++};
+diff --git a/src/doctor/rules/index.test.ts b/src/doctor/rules/index.test.ts
+new file mode 100644
+index 0000000..37dba41
+--- /dev/null
++++ b/src/doctor/rules/index.test.ts
+@@ -0,0 +1,19 @@
++import { describe, it, expect } from 'vitest';
++import { ALL_DOCTOR_RULES } from './index';
++
++describe('ALL_DOCTOR_RULES', () => {
++  it('registers exactly the 8 rule modules backing spec §9, each with a unique id', () => {
++    const ids = ALL_DOCTOR_RULES.map((r) => r.id);
++    expect(ids).toEqual([
++      'canon-presence',
++      'config-validity',
++      'skill-shape',
++      'skill-frontmatter',
++      'clobber-risk',
++      'skill-migration',
++      'trust-gate',
++      'generated-file-drift',
++    ]);
++    expect(new Set(ids).size).toBe(ids.length);
++  });
++});
+diff --git a/src/doctor/rules/index.ts b/src/doctor/rules/index.ts
+new file mode 100644
+index 0000000..636c70a
+--- /dev/null
++++ b/src/doctor/rules/index.ts
+@@ -0,0 +1,20 @@
++import { canonPresenceRule } from './canonPresence';
++import { configValidityRule } from './configValidity';
++import { skillShapeRule } from './skillShape';
++import { skillFrontmatterRule } from './skillFrontmatter';
++import { clobberRiskRule } from './clobberRisk';
++import { skillMigrationRule } from './skillMigration';
++import { trustGateRule } from './trustGate';
++import { generatedFileDriftRule } from './generatedFileDrift';
++import type { DoctorRule } from '../types';
++
++export const ALL_DOCTOR_RULES: DoctorRule[] = [
++  canonPresenceRule,
++  configValidityRule,
++  skillShapeRule,
++  skillFrontmatterRule,
++  clobberRiskRule,
++  skillMigrationRule,
++  trustGateRule,
++  generatedFileDriftRule,
++];
+diff --git a/src/doctor/rules/skillFrontmatter.test.ts b/src/doctor/rules/skillFrontmatter.test.ts
+new file mode 100644
+index 0000000..ce7da58
+--- /dev/null
++++ b/src/doctor/rules/skillFrontmatter.test.ts
+@@ -0,0 +1,39 @@
++import { describe, it, expect, beforeEach, afterEach } from 'vitest';
++import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import { skillFrontmatterRule } from './skillFrontmatter';
++import type { DoctorContext } from '../types';
++
++function makeCtx(repoRoot: string): DoctorContext {
++  return { repoRoot, homeDir: '/home/user', config: { status: 'absent' }, configuredHarnesses: [], pendingHarnesses: [] };
++}
++
++describe('skillFrontmatterRule', () => {
++  let repoRoot: string;
++  beforeEach(() => {
++    repoRoot = mkdtempSync(join(tmpdir(), 'hh-skillfm-'));
++  });
++  afterEach(() => {
++    rmSync(repoRoot, { recursive: true, force: true });
++  });
++
++  it('passes for valid frontmatter', () => {
++    const dir = join(repoRoot, '.agents', 'skills', 'writing-tests');
++    mkdirSync(dir, { recursive: true });
++    writeFileSync(join(dir, 'SKILL.md'), '---\nname: writing-tests\ndescription: x\n---\n');
++    expect(skillFrontmatterRule.check(makeCtx(repoRoot))).toEqual([]);
++  });
++
++  it('flags a name/directory mismatch', () => {
++    const dir = join(repoRoot, '.agents', 'skills', 'writing-tests');
++    mkdirSync(dir, { recursive: true });
++    writeFileSync(join(dir, 'SKILL.md'), '---\nname: other\ndescription: x\n---\n');
++    expect(skillFrontmatterRule.check(makeCtx(repoRoot)).length).toBeGreaterThan(0);
++  });
++
++  it('skips directories with no SKILL.md (left to skill-shape rule)', () => {
++    mkdirSync(join(repoRoot, '.agents', 'skills', 'empty'), { recursive: true });
++    expect(skillFrontmatterRule.check(makeCtx(repoRoot))).toEqual([]);
++  });
++});
+diff --git a/src/doctor/rules/skillFrontmatter.ts b/src/doctor/rules/skillFrontmatter.ts
+new file mode 100644
+index 0000000..25e678a
+--- /dev/null
++++ b/src/doctor/rules/skillFrontmatter.ts
+@@ -0,0 +1,25 @@
++import { listSkillDirNames, readSkillFrontmatter } from '../../canon';
++import { validateSkillFrontmatter } from '../../skills/validate';
++import type { DoctorRule, Finding } from '../types';
++
++export const skillFrontmatterRule: DoctorRule = {
++  id: 'skill-frontmatter',
++  applies: () => true,
++  check: (ctx) => {
++    const findings: Finding[] = [];
++    for (const name of listSkillDirNames(ctx.repoRoot)) {
++      const { hasSkillMd, frontmatter } = readSkillFrontmatter(ctx.repoRoot, name);
++      if (!hasSkillMd) continue; // reported by skill-shape instead
++      for (const issue of validateSkillFrontmatter(name, frontmatter)) {
++        findings.push({
++          ruleId: 'skill-frontmatter',
++          severity: 'error',
++          message: issue.message,
++          remediation: `Fix the frontmatter in .agents/skills/${name}/SKILL.md.`,
++          forceable: false,
++        });
++      }
++    }
++    return findings;
++  },
++};
+diff --git a/src/doctor/rules/skillMigration.test.ts b/src/doctor/rules/skillMigration.test.ts
+new file mode 100644
+index 0000000..37e9d42
+--- /dev/null
++++ b/src/doctor/rules/skillMigration.test.ts
+@@ -0,0 +1,52 @@
++import { describe, it, expect, beforeEach, afterEach } from 'vitest';
++import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import { skillMigrationRule } from './skillMigration';
++import type { DoctorContext } from '../types';
++
++function makeCtx(repoRoot: string, pendingHarnesses: DoctorContext['pendingHarnesses'] = ['claude-code']): DoctorContext {
++  return { repoRoot, homeDir: '/home/user', config: { status: 'absent' }, configuredHarnesses: [], pendingHarnesses };
++}
++
++describe('skillMigrationRule', () => {
++  let repoRoot: string;
++  beforeEach(() => {
++    repoRoot = mkdtempSync(join(tmpdir(), 'hh-migrule-'));
++  });
++  afterEach(() => {
++    rmSync(repoRoot, { recursive: true, force: true });
++  });
++
++  it('does not apply when claude-code is irrelevant', () => {
++    expect(skillMigrationRule.applies(makeCtx(repoRoot, []))).toBe(false);
++  });
++
++  it('reports unmigrated-skills for a new entry', () => {
++    mkdirSync(join(repoRoot, '.claude', 'skills', 'a'), { recursive: true });
++    writeFileSync(join(repoRoot, '.claude', 'skills', 'a', 'SKILL.md'), 'body');
++    const findings = skillMigrationRule.check(makeCtx(repoRoot));
++    expect(findings).toEqual([
++      expect.objectContaining({ ruleId: 'unmigrated-skills', severity: 'error', harnessId: 'claude-code', forceable: false }),
++    ]);
++  });
++
++  it('reports skill-migration-collision for a differing entry', () => {
++    mkdirSync(join(repoRoot, '.claude', 'skills', 'a'), { recursive: true });
++    mkdirSync(join(repoRoot, '.agents', 'skills', 'a'), { recursive: true });
++    writeFileSync(join(repoRoot, '.claude', 'skills', 'a', 'SKILL.md'), 'one');
++    writeFileSync(join(repoRoot, '.agents', 'skills', 'a', 'SKILL.md'), 'two');
++    const findings = skillMigrationRule.check(makeCtx(repoRoot));
++    expect(findings).toEqual([
++      expect.objectContaining({ ruleId: 'skill-migration-collision', severity: 'error', forceable: false }),
++    ]);
++  });
++
++  it('reports nothing for an already-identical entry', () => {
++    mkdirSync(join(repoRoot, '.claude', 'skills', 'a'), { recursive: true });
++    mkdirSync(join(repoRoot, '.agents', 'skills', 'a'), { recursive: true });
++    writeFileSync(join(repoRoot, '.claude', 'skills', 'a', 'SKILL.md'), 'same');
++    writeFileSync(join(repoRoot, '.agents', 'skills', 'a', 'SKILL.md'), 'same');
++    expect(skillMigrationRule.check(makeCtx(repoRoot))).toEqual([]);
++  });
++});
+diff --git a/src/doctor/rules/skillMigration.ts b/src/doctor/rules/skillMigration.ts
+new file mode 100644
+index 0000000..756622d
+--- /dev/null
++++ b/src/doctor/rules/skillMigration.ts
+@@ -0,0 +1,46 @@
++import { ALL_HARNESS_IDS, type HarnessId } from '../../harnesses';
++import { getHarnessEntry } from '../../registry';
++import { planSkillMigration } from '../../skills/skillMigrationPlan';
++import type { DoctorContext, DoctorRule, Finding } from '../types';
++
++function migrateSymlinkHarnessIds(): HarnessId[] {
++  return ALL_HARNESS_IDS.filter((id) => getHarnessEntry(id).skills.mode === 'migrate-symlink');
++}
++
++function isRelevant(ctx: DoctorContext, id: HarnessId): boolean {
++  return ctx.configuredHarnesses.includes(id) || ctx.pendingHarnesses.includes(id);
++}
++
++export const skillMigrationRule: DoctorRule = {
++  id: 'skill-migration',
++  applies: (ctx) => migrateSymlinkHarnessIds().some((id) => isRelevant(ctx, id)),
++  check: (ctx) => {
++    const findings: Finding[] = [];
++    for (const id of migrateSymlinkHarnessIds()) {
++      if (!isRelevant(ctx, id)) continue;
++      const entry = getHarnessEntry(id);
++      for (const planEntry of planSkillMigration(ctx.repoRoot, entry)) {
++        if (planEntry.classification === 'new') {
++          findings.push({
++            ruleId: 'unmigrated-skills',
++            severity: 'error',
++            message: `${entry.skills.symlinkPath}/${planEntry.name}/ has no counterpart yet in .agents/skills/${planEntry.name}/.`,
++            remediation: `Run \`harness-hub migrate ${id}\` to adopt it into canon.`,
++            harnessId: id,
++            forceable: false,
++          });
++        } else if (planEntry.classification === 'collision') {
++          findings.push({
++            ruleId: 'skill-migration-collision',
++            severity: 'error',
++            message: `${entry.skills.symlinkPath}/${planEntry.name}/SKILL.md differs from .agents/skills/${planEntry.name}/SKILL.md.`,
++            remediation: 'Reconcile by hand (rename one, merge manually, or delete the stale copy), then re-run migrate.',
++            harnessId: id,
++            forceable: false,
++          });
++        }
++      }
++    }
++    return findings;
++  },
++};
+diff --git a/src/doctor/rules/skillShape.test.ts b/src/doctor/rules/skillShape.test.ts
+new file mode 100644
+index 0000000..c74890d
+--- /dev/null
++++ b/src/doctor/rules/skillShape.test.ts
+@@ -0,0 +1,42 @@
++import { describe, it, expect, beforeEach, afterEach } from 'vitest';
++import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import { skillShapeRule } from './skillShape';
++import type { DoctorContext } from '../types';
++
++function makeCtx(repoRoot: string): DoctorContext {
++  return { repoRoot, homeDir: '/home/user', config: { status: 'absent' }, configuredHarnesses: [], pendingHarnesses: [] };
++}
++
++describe('skillShapeRule', () => {
++  let repoRoot: string;
++  beforeEach(() => {
++    repoRoot = mkdtempSync(join(tmpdir(), 'hh-skillshape-'));
++  });
++  afterEach(() => {
++    rmSync(repoRoot, { recursive: true, force: true });
++  });
++
++  it('passes for a well-formed skill', () => {
++    const dir = join(repoRoot, '.agents', 'skills', 'writing-tests');
++    mkdirSync(dir, { recursive: true });
++    writeFileSync(join(dir, 'SKILL.md'), '---\nname: writing-tests\ndescription: x\n---\n');
++    expect(skillShapeRule.check(makeCtx(repoRoot))).toEqual([]);
++  });
++
++  it('flags a skill directory with no SKILL.md', () => {
++    mkdirSync(join(repoRoot, '.agents', 'skills', 'empty'), { recursive: true });
++    const findings = skillShapeRule.check(makeCtx(repoRoot));
++    expect(findings).toHaveLength(1);
++    expect(findings[0].message).toContain('empty');
++  });
++
++  it('flags a flat .md file at the skills root', () => {
++    mkdirSync(join(repoRoot, '.agents', 'skills'), { recursive: true });
++    writeFileSync(join(repoRoot, '.agents', 'skills', 'stray.md'), '# stray');
++    const findings = skillShapeRule.check(makeCtx(repoRoot));
++    expect(findings).toHaveLength(1);
++    expect(findings[0].message).toContain('stray.md');
++  });
++});
+diff --git a/src/doctor/rules/skillShape.ts b/src/doctor/rules/skillShape.ts
+new file mode 100644
+index 0000000..354ddf5
+--- /dev/null
++++ b/src/doctor/rules/skillShape.ts
+@@ -0,0 +1,32 @@
++import { listSkillDirNames, listSkillsRootNonDirEntries, readSkillFrontmatter } from '../../canon';
++import type { DoctorRule, Finding } from '../types';
++
++export const skillShapeRule: DoctorRule = {
++  id: 'skill-shape',
++  applies: () => true,
++  check: (ctx) => {
++    const findings: Finding[] = [];
++    for (const entryName of listSkillsRootNonDirEntries(ctx.repoRoot)) {
++      findings.push({
++        ruleId: 'skill-shape',
++        severity: 'error',
++        message: `.agents/skills/${entryName} is not a directory — skills must be laid out as <name>/SKILL.md.`,
++        remediation: `Move ${entryName} into its own <skill-name>/SKILL.md directory.`,
++        forceable: false,
++      });
++    }
++    for (const name of listSkillDirNames(ctx.repoRoot)) {
++      const { hasSkillMd } = readSkillFrontmatter(ctx.repoRoot, name);
++      if (!hasSkillMd) {
++        findings.push({
++          ruleId: 'skill-shape',
++          severity: 'error',
++          message: `.agents/skills/${name}/ has no SKILL.md.`,
++          remediation: `Add .agents/skills/${name}/SKILL.md, or remove the directory if it isn't a skill.`,
++          forceable: false,
++        });
++      }
++    }
++    return findings;
++  },
++};
+diff --git a/src/doctor/rules/trustGate.test.ts b/src/doctor/rules/trustGate.test.ts
+new file mode 100644
+index 0000000..ca1cbe8
+--- /dev/null
++++ b/src/doctor/rules/trustGate.test.ts
+@@ -0,0 +1,61 @@
++import { describe, it, expect, beforeEach, afterEach } from 'vitest';
++import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import { trustGateRule } from './trustGate';
++import type { DoctorContext } from '../types';
++
++function makeCtx(homeDir: string, repoRoot: string, pendingHarnesses: DoctorContext['pendingHarnesses'] = ['hermes']): DoctorContext {
++  return { repoRoot, homeDir, config: { status: 'absent' }, configuredHarnesses: [], pendingHarnesses };
++}
++
++describe('trustGateRule', () => {
++  let homeDir: string;
++  let repoRoot: string;
++
++  beforeEach(() => {
++    homeDir = mkdtempSync(join(tmpdir(), 'hh-home-'));
++    repoRoot = mkdtempSync(join(tmpdir(), 'hh-repo-'));
++  });
++
++  afterEach(() => {
++    rmSync(homeDir, { recursive: true, force: true });
++    rmSync(repoRoot, { recursive: true, force: true });
++  });
++
++  it('does not apply when hermes is irrelevant', () => {
++    expect(trustGateRule.applies(makeCtx(homeDir, repoRoot, []))).toBe(false);
++  });
++
++  it('warns (does not error) when ~/.hermes/config.yaml is missing', () => {
++    const findings = trustGateRule.check(makeCtx(homeDir, repoRoot));
++    expect(findings).toEqual([expect.objectContaining({ ruleId: 'hermes-trust', severity: 'warning', harnessId: 'hermes' })]);
++  });
++
++  it('warns when the config file fails to parse', () => {
++    mkdirSync(join(homeDir, '.hermes'), { recursive: true });
++    writeFileSync(join(homeDir, '.hermes', 'config.yaml'), 'skills: [\n');
++    expect(trustGateRule.check(makeCtx(homeDir, repoRoot))[0].severity).toBe('warning');
++  });
++
++  it('errors when the repo is not in trusted_project_dirs', () => {
++    mkdirSync(join(homeDir, '.hermes'), { recursive: true });
++    writeFileSync(join(homeDir, '.hermes', 'config.yaml'), 'skills:\n  trusted_project_dirs:\n    - /some/other/repo\n');
++    const findings = trustGateRule.check(makeCtx(homeDir, repoRoot));
++    expect(findings).toEqual([
++      expect.objectContaining({ ruleId: 'hermes-trust', severity: 'error', harnessId: 'hermes', forceable: false }),
++    ]);
++  });
++
++  it('passes when the repo is listed', () => {
++    mkdirSync(join(homeDir, '.hermes'), { recursive: true });
++    writeFileSync(join(homeDir, '.hermes', 'config.yaml'), `skills:\n  trusted_project_dirs:\n    - ${repoRoot}\n`);
++    expect(trustGateRule.check(makeCtx(homeDir, repoRoot))).toEqual([]);
++  });
++
++  it('normalizes a trailing slash on the trusted path', () => {
++    mkdirSync(join(homeDir, '.hermes'), { recursive: true });
++    writeFileSync(join(homeDir, '.hermes', 'config.yaml'), `skills:\n  trusted_project_dirs:\n    - ${repoRoot}/\n`);
++    expect(trustGateRule.check(makeCtx(homeDir, repoRoot))).toEqual([]);
++  });
++});
+diff --git a/src/doctor/rules/trustGate.ts b/src/doctor/rules/trustGate.ts
+new file mode 100644
+index 0000000..57f4538
+--- /dev/null
++++ b/src/doctor/rules/trustGate.ts
+@@ -0,0 +1,85 @@
++import { existsSync, readFileSync } from 'node:fs';
++import { join } from 'node:path';
++import { parse as parseYaml } from 'yaml';
++import { ALL_HARNESS_IDS, type HarnessId } from '../../harnesses';
++import { getHarnessEntry } from '../../registry';
++import type { DoctorContext, DoctorRule, Finding } from '../types';
++
++function getAtKeyPath(obj: unknown, keyPath: string[]): unknown {
++  let current = obj;
++  for (const key of keyPath) {
++    if (typeof current !== 'object' || current === null || !(key in current)) {
++      return undefined;
++    }
++    current = (current as Record<string, unknown>)[key];
++  }
++  return current;
++}
++
++function trustGatedHarnessIds(): HarnessId[] {
++  return ALL_HARNESS_IDS.filter((id) => getHarnessEntry(id).skills.trustGate !== undefined);
++}
++
++function isRelevant(ctx: DoctorContext, id: HarnessId): boolean {
++  return ctx.configuredHarnesses.includes(id) || ctx.pendingHarnesses.includes(id);
++}
++
++export const trustGateRule: DoctorRule = {
++  id: 'trust-gate',
++  applies: (ctx) => trustGatedHarnessIds().some((id) => isRelevant(ctx, id)),
++  check: (ctx) => {
++    const findings: Finding[] = [];
++    for (const id of trustGatedHarnessIds()) {
++      if (!isRelevant(ctx, id)) continue;
++      const entry = getHarnessEntry(id);
++      const trustGate = entry.skills.trustGate;
++      if (!trustGate) continue;
++
++      const configPath = join(ctx.homeDir, trustGate.configPathFromHome);
++      const cantVerify = (reason: string) => {
++        findings.push({
++          ruleId: 'hermes-trust',
++          severity: 'warning',
++          message: `Can't verify ${entry.displayName} trust: ${reason}`,
++          remediation: `Run \`${trustGate.trustCommand}\` inside the repo, or check ${configPath} manually.`,
++          harnessId: id,
++          forceable: false,
++        });
++      };
++
++      if (!existsSync(configPath)) {
++        cantVerify(`${configPath} does not exist.`);
++        continue;
++      }
++
++      let parsed: unknown;
++      try {
++        parsed = parseYaml(readFileSync(configPath, 'utf8'));
++      } catch (err) {
++        cantVerify(`${configPath} failed to parse (${err instanceof Error ? err.message : String(err)}).`);
++        continue;
++      }
++
++      const trustedDirs = getAtKeyPath(parsed, trustGate.trustedDirsKeyPath);
++      if (!Array.isArray(trustedDirs)) {
++        cantVerify(`${configPath} has no readable "${trustGate.trustedDirsKeyPath.join('.')}" list.`);
++        continue;
++      }
++
++      const isTrusted = trustedDirs.some(
++        (dir) => typeof dir === 'string' && dir.replace(/\/$/, '') === ctx.repoRoot.replace(/\/$/, '')
++      );
++      if (!isTrusted) {
++        findings.push({
++          ruleId: 'hermes-trust',
++          severity: 'error',
++          message: `${ctx.repoRoot} is not listed in ${configPath}'s "${trustGate.trustedDirsKeyPath.join('.')}".`,
++          remediation: `Run \`${trustGate.trustCommand}\` inside the repo, then re-run enable.`,
++          harnessId: id,
++          forceable: false,
++        });
++      }
++    }
++    return findings;
++  },
++};
+diff --git a/src/doctor/run.test.ts b/src/doctor/run.test.ts
+new file mode 100644
+index 0000000..6d6057d
+--- /dev/null
++++ b/src/doctor/run.test.ts
+@@ -0,0 +1,95 @@
++import { describe, it, expect } from 'vitest';
++import { runDoctor, hasBlockingErrors, findingsForHarness } from './run';
++import type { DoctorContext, DoctorRule, Finding } from './types';
++
++function makeCtx(overrides: Partial<DoctorContext> = {}): DoctorContext {
++  return {
++    repoRoot: '/repo',
++    homeDir: '/home/user',
++    config: { status: 'absent' },
++    configuredHarnesses: [],
++    pendingHarnesses: [],
++    ...overrides,
++  };
++}
++
++describe('runDoctor', () => {
++  it('only runs rules whose applies() returns true', () => {
++    const ranRuleIds: string[] = [];
++    const rules: DoctorRule[] = [
++      {
++        id: 'always',
++        applies: () => true,
++        check: () => {
++          ranRuleIds.push('always');
++          return [];
++        },
++      },
++      {
++        id: 'never',
++        applies: () => false,
++        check: () => {
++          ranRuleIds.push('never');
++          return [];
++        },
++      },
++    ];
++    runDoctor(makeCtx(), rules);
++    expect(ranRuleIds).toEqual(['always']);
++  });
++
++  it('aggregates findings from every applicable rule', () => {
++    const finding: Finding = { ruleId: 'a', severity: 'error', message: 'm', remediation: 'r', forceable: false };
++    const rules: DoctorRule[] = [
++      { id: 'a', applies: () => true, check: () => [finding] },
++      { id: 'b', applies: () => true, check: () => [] },
++    ];
++    expect(runDoctor(makeCtx(), rules)).toEqual([finding]);
++  });
++});
++
++describe('hasBlockingErrors', () => {
++  it('is true when any finding is an error', () => {
++    expect(
++      hasBlockingErrors([{ ruleId: 'a', severity: 'error', message: '', remediation: '', forceable: false }])
++    ).toBe(true);
++  });
++
++  it('is false when all findings are warnings', () => {
++    expect(
++      hasBlockingErrors([{ ruleId: 'a', severity: 'warning', message: '', remediation: '', forceable: false }])
++    ).toBe(false);
++  });
++
++  it('is false for an empty list', () => {
++    expect(hasBlockingErrors([])).toBe(false);
++  });
++});
++
++describe('findingsForHarness', () => {
++  const canonWide: Finding = { ruleId: 'canon', severity: 'error', message: '', remediation: '', forceable: false };
++  const claudeOnly: Finding = {
++    ruleId: 'claude',
++    severity: 'error',
++    message: '',
++    remediation: '',
++    forceable: false,
++    harnessId: 'claude-code',
++  };
++  const hermesOnly: Finding = {
++    ruleId: 'hermes',
++    severity: 'error',
++    message: '',
++    remediation: '',
++    forceable: false,
++    harnessId: 'hermes',
++  };
++
++  it('includes canon-wide findings for every harness', () => {
++    expect(findingsForHarness([canonWide, claudeOnly, hermesOnly], 'cursor')).toEqual([canonWide]);
++  });
++
++  it('includes a harness-scoped finding only for its own harness', () => {
++    expect(findingsForHarness([canonWide, claudeOnly, hermesOnly], 'claude-code')).toEqual([canonWide, claudeOnly]);
++  });
++});
+diff --git a/src/doctor/run.ts b/src/doctor/run.ts
+new file mode 100644
+index 0000000..0e95579
+--- /dev/null
++++ b/src/doctor/run.ts
+@@ -0,0 +1,20 @@
++import type { DoctorContext, DoctorRule, Finding } from './types';
++
++export function runDoctor(ctx: DoctorContext, rules: DoctorRule[]): Finding[] {
++  const findings: Finding[] = [];
++  for (const rule of rules) {
++    if (rule.applies(ctx)) {
++      findings.push(...rule.check(ctx));
++    }
++  }
++  return findings;
++}
++
++export function hasBlockingErrors(findings: Finding[]): boolean {
++  return findings.some((f) => f.severity === 'error');
++}
++
++/** Findings relevant to a specific harness: harness-scoped findings for it, plus every canon-wide finding. */
++export function findingsForHarness(findings: Finding[], harnessId: string): Finding[] {
++  return findings.filter((f) => f.harnessId === undefined || f.harnessId === harnessId);
++}
+diff --git a/src/doctor/types.ts b/src/doctor/types.ts
+new file mode 100644
+index 0000000..1854903
+--- /dev/null
++++ b/src/doctor/types.ts
+@@ -0,0 +1,31 @@
++import type { HarnessId } from '../harnesses';
++import type { ConfigLoadResult } from '../config';
++
++export type Severity = 'error' | 'warning';
++
++export interface Finding {
++  ruleId: string;
++  severity: Severity;
++  message: string;
++  remediation: string;
++  /** Set when this finding is specific to one harness; undefined for canon-wide findings. */
++  harnessId?: HarnessId;
++  /** True only for findings `enable --force` may override (clobber risk, MVP). */
++  forceable: boolean;
++}
++
++export interface DoctorContext {
++  repoRoot: string;
++  homeDir: string;
++  config: ConfigLoadResult;
++  /** Harnesses already configured ("ok" config's harnesses; [] if config is absent/invalid). */
++  configuredHarnesses: HarnessId[];
++  /** Harnesses `enable` is currently trying to wire, not yet in configuredHarnesses (empty for a plain `doctor` run). */
++  pendingHarnesses: HarnessId[];
++}
++
++export interface DoctorRule {
++  id: string;
++  applies(ctx: DoctorContext): boolean;
++  check(ctx: DoctorContext): Finding[];
++}
+diff --git a/src/fsutil.test.ts b/src/fsutil.test.ts
+new file mode 100644
+index 0000000..438b14e
+--- /dev/null
++++ b/src/fsutil.test.ts
+@@ -0,0 +1,158 @@
++import { describe, it, expect, beforeEach, afterEach } from 'vitest';
++import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, symlinkSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import {
++  copyDirRecursive,
++  dirsByteIdentical,
++  isSymlinkTo,
++  relativeSymlinkTarget,
++  ensureGitignoreEntries,
++} from './fsutil';
++
++describe('fsutil', () => {
++  let root: string;
++
++  beforeEach(() => {
++    root = mkdtempSync(join(tmpdir(), 'hh-fsutil-'));
++  });
++
++  afterEach(() => {
++    rmSync(root, { recursive: true, force: true });
++  });
++
++  describe('copyDirRecursive', () => {
++    it('copies nested files and directories', () => {
++      const src = join(root, 'src');
++      mkdirSync(join(src, 'scripts'), { recursive: true });
++      writeFileSync(join(src, 'SKILL.md'), 'body');
++      writeFileSync(join(src, 'scripts', 'run.sh'), 'echo hi');
++
++      const dest = join(root, 'dest');
++      copyDirRecursive(src, dest);
++
++      expect(readFileSync(join(dest, 'SKILL.md'), 'utf8')).toBe('body');
++      expect(readFileSync(join(dest, 'scripts', 'run.sh'), 'utf8')).toBe('echo hi');
++    });
++  });
++
++  describe('dirsByteIdentical', () => {
++    it('returns true for identical trees', () => {
++      const a = join(root, 'a');
++      const b = join(root, 'b');
++      mkdirSync(join(a, 'sub'), { recursive: true });
++      mkdirSync(join(b, 'sub'), { recursive: true });
++      writeFileSync(join(a, 'sub', 'f.txt'), 'same');
++      writeFileSync(join(b, 'sub', 'f.txt'), 'same');
++      expect(dirsByteIdentical(a, b)).toBe(true);
++    });
++
++    it('returns false when file contents differ', () => {
++      const a = join(root, 'a');
++      const b = join(root, 'b');
++      mkdirSync(a, { recursive: true });
++      mkdirSync(b, { recursive: true });
++      writeFileSync(join(a, 'f.txt'), 'one');
++      writeFileSync(join(b, 'f.txt'), 'two');
++      expect(dirsByteIdentical(a, b)).toBe(false);
++    });
++
++    it('returns false when one side has an extra file', () => {
++      const a = join(root, 'a');
++      const b = join(root, 'b');
++      mkdirSync(a, { recursive: true });
++      mkdirSync(b, { recursive: true });
++      writeFileSync(join(a, 'f.txt'), 'one');
++      writeFileSync(join(b, 'f.txt'), 'one');
++      writeFileSync(join(b, 'extra.txt'), 'x');
++      expect(dirsByteIdentical(a, b)).toBe(false);
++    });
++
++    it('returns false when either directory is missing', () => {
++      expect(dirsByteIdentical(join(root, 'missing-a'), join(root, 'missing-b'))).toBe(false);
++    });
++
++    it('returns false when a symlink is compared to a regular file', () => {
++      const a = join(root, 'a');
++      const b = join(root, 'b');
++      mkdirSync(a, { recursive: true });
++      mkdirSync(b, { recursive: true });
++      writeFileSync(join(a, 'entry'), 'same');
++      symlinkSync('entry', join(b, 'entry'));
++      expect(dirsByteIdentical(a, b)).toBe(false);
++    });
++
++    it('returns true for two symlinks with the same stored target', () => {
++      const a = join(root, 'a');
++      const b = join(root, 'b');
++      mkdirSync(a, { recursive: true });
++      mkdirSync(b, { recursive: true });
++      symlinkSync('.agents/skills', join(a, 'entry'));
++      symlinkSync('.agents/skills', join(b, 'entry'));
++      expect(dirsByteIdentical(a, b)).toBe(true);
++    });
++
++    it('returns false for two symlinks with different stored targets', () => {
++      const a = join(root, 'a');
++      const b = join(root, 'b');
++      mkdirSync(a, { recursive: true });
++      mkdirSync(b, { recursive: true });
++      symlinkSync('one', join(a, 'entry'));
++      symlinkSync('two', join(b, 'entry'));
++      expect(dirsByteIdentical(a, b)).toBe(false);
++    });
++  });
++
++  describe('isSymlinkTo', () => {
++    it('returns true when the symlink resolves to the expected target', () => {
++      const link = join(root, 'link');
++      symlinkSync('.agents/skills', link);
++      expect(isSymlinkTo(link, '.agents/skills')).toBe(true);
++    });
++
++    it('returns false for a symlink pointing elsewhere', () => {
++      const link = join(root, 'link');
++      symlinkSync('somewhere/else', link);
++      expect(isSymlinkTo(link, '.agents/skills')).toBe(false);
++    });
++
++    it('returns false for a real directory', () => {
++      const dir = join(root, 'realdir');
++      mkdirSync(dir);
++      expect(isSymlinkTo(dir, '.agents/skills')).toBe(false);
++    });
++
++    it('returns false when the path does not exist', () => {
++      expect(isSymlinkTo(join(root, 'nope'), '.agents/skills')).toBe(false);
++    });
++  });
++
++  describe('relativeSymlinkTarget', () => {
++    it('computes the relative target for a top-level file symlink', () => {
++      expect(relativeSymlinkTarget('/repo', 'CLAUDE.md', '/repo/AGENTS.md')).toBe('AGENTS.md');
++    });
++
++    it('computes the relative target for a nested directory symlink', () => {
++      expect(relativeSymlinkTarget('/repo', '.claude/skills', '/repo/.agents/skills')).toBe(
++        join('..', '.agents', 'skills')
++      );
++    });
++  });
++
++  describe('ensureGitignoreEntries', () => {
++    it('creates .gitignore when absent', () => {
++      ensureGitignoreEntries(root, ['CLAUDE.md', '.claude/skills']);
++      const content = readFileSync(join(root, '.gitignore'), 'utf8');
++      expect(content).toContain('CLAUDE.md');
++      expect(content).toContain('.claude/skills');
++    });
++
++    it('appends only missing entries, without duplicating existing ones', () => {
++      writeFileSync(join(root, '.gitignore'), 'node_modules\nCLAUDE.md\n');
++      ensureGitignoreEntries(root, ['CLAUDE.md', '.claude/skills']);
++      const lines = readFileSync(join(root, '.gitignore'), 'utf8').split('\n').filter(Boolean);
++      expect(lines.filter((l) => l === 'CLAUDE.md')).toHaveLength(1);
++      expect(lines).toContain('.claude/skills');
++    });
++  });
++});
+diff --git a/src/fsutil.ts b/src/fsutil.ts
+new file mode 100644
+index 0000000..a767a2f
+--- /dev/null
++++ b/src/fsutil.ts
+@@ -0,0 +1,99 @@
++import {
++  copyFileSync,
++  existsSync,
++  lstatSync,
++  mkdirSync,
++  readdirSync,
++  readFileSync,
++  readlinkSync,
++  Stats,
++  symlinkSync,
++  writeFileSync,
++} from 'node:fs';
++import { dirname, join, relative } from 'node:path';
++
++export function copyDirRecursive(src: string, dest: string): void {
++  mkdirSync(dest, { recursive: true });
++  for (const entry of readdirSync(src, { withFileTypes: true })) {
++    const srcPath = join(src, entry.name);
++    const destPath = join(dest, entry.name);
++    if (entry.isDirectory()) {
++      copyDirRecursive(srcPath, destPath);
++    } else if (entry.isSymbolicLink()) {
++      symlinkSync(readlinkSync(srcPath), destPath);
++    } else {
++      copyFileSync(srcPath, destPath);
++    }
++  }
++}
++
++/** Recursively compares two directory trees for identical relative paths and byte-identical file contents. */
++export function dirsByteIdentical(a: string, b: string): boolean {
++  if (!existsSync(a) || !existsSync(b)) return false;
++  const entriesA = readdirSync(a, { withFileTypes: true })
++    .map((e) => e.name)
++    .sort();
++  const entriesB = readdirSync(b, { withFileTypes: true })
++    .map((e) => e.name)
++    .sort();
++  if (entriesA.length !== entriesB.length || entriesA.some((name, i) => name !== entriesB[i])) {
++    return false;
++  }
++  for (const name of entriesA) {
++    const pathA = join(a, name);
++    const pathB = join(b, name);
++    let statA: Stats;
++    let statB: Stats;
++    try {
++      statA = lstatSync(pathA);
++      statB = lstatSync(pathB);
++    } catch {
++      return false;
++    }
++    if (statA.isDirectory() !== statB.isDirectory()) return false;
++    if (statA.isDirectory()) {
++      if (!dirsByteIdentical(pathA, pathB)) return false;
++    } else if (statA.isSymbolicLink() || statB.isSymbolicLink()) {
++      // A symlink is never byte-identical to a real file/dir, and two symlinks
++      // match only when their stored targets match exactly (spec §10 ownership
++      // semantics — exact stored-target equality, no resolution).
++      if (statA.isSymbolicLink() !== statB.isSymbolicLink()) return false;
++      if (readlinkSync(pathA) !== readlinkSync(pathB)) return false;
++    } else if (!readFileSync(pathA).equals(readFileSync(pathB))) {
++      return false;
++    }
++  }
++  return true;
++}
++
++/** True if `linkPath` exists, is a symlink, and resolves to exactly `expectedTarget`. */
++export function isSymlinkTo(linkPath: string, expectedTarget: string): boolean {
++  let stat;
++  try {
++    stat = lstatSync(linkPath);
++  } catch {
++    return false;
++  }
++  if (!stat.isSymbolicLink()) return false;
++  return readlinkSync(linkPath) === expectedTarget;
++}
++
++/** The relative path a symlink at `repoRoot/linkRelPath` needs to point at `targetAbsPath`. */
++export function relativeSymlinkTarget(
++  repoRoot: string,
++  linkRelPath: string,
++  targetAbsPath: string
++): string {
++  return relative(dirname(join(repoRoot, linkRelPath)), targetAbsPath);
++}
++
++/** Appends any of `entries` to repoRoot/.gitignore that isn't already present as an exact line. Creates the file if absent. */
++export function ensureGitignoreEntries(repoRoot: string, entries: string[]): void {
++  const gitignorePath = join(repoRoot, '.gitignore');
++  const existingLines = existsSync(gitignorePath) ? readFileSync(gitignorePath, 'utf8').split('\n') : [];
++  const missing = entries.filter((entry) => !existingLines.includes(entry));
++  if (missing.length === 0) return;
++  const separator = existingLines.length > 0 && existingLines[existingLines.length - 1] !== '' ? '\n' : '';
++  const updated = existingLines.join('\n') + separator + missing.join('\n') + '\n';
++  writeFileSync(gitignorePath, updated, 'utf8');
++}
+diff --git a/src/harnesses.test.ts b/src/harnesses.test.ts
+new file mode 100644
+index 0000000..cea535e
+--- /dev/null
++++ b/src/harnesses.test.ts
+@@ -0,0 +1,20 @@
++import { describe, it, expect } from 'vitest';
++import { ALL_HARNESS_IDS, isHarnessId } from './harnesses';
++
++describe('harnesses', () => {
++  it('lists exactly the seven recognized ids from spec §4', () => {
++    expect([...ALL_HARNESS_IDS].sort()).toEqual(
++      ['claude-code', 'codex', 'cursor', 'deepseek', 'hermes', 'opencode', 'pi'].sort()
++    );
++  });
++
++  it('isHarnessId accepts every recognized id', () => {
++    for (const id of ALL_HARNESS_IDS) {
++      expect(isHarnessId(id)).toBe(true);
++    }
++  });
++
++  it('isHarnessId rejects an unrecognized string', () => {
++    expect(isHarnessId('not-a-real-harness')).toBe(false);
++  });
++});
+diff --git a/src/harnesses.ts b/src/harnesses.ts
+new file mode 100644
+index 0000000..2e5fd77
+--- /dev/null
++++ b/src/harnesses.ts
+@@ -0,0 +1,15 @@
++export const ALL_HARNESS_IDS = [
++  'claude-code',
++  'cursor',
++  'opencode',
++  'codex',
++  'hermes',
++  'pi',
++  'deepseek',
++] as const;
++
++export type HarnessId = (typeof ALL_HARNESS_IDS)[number];
++
++export function isHarnessId(value: string): value is HarnessId {
++  return (ALL_HARNESS_IDS as readonly string[]).includes(value);
++}
+diff --git a/src/registry/data.ts b/src/registry/data.ts
+new file mode 100644
+index 0000000..06194a1
+--- /dev/null
++++ b/src/registry/data.ts
+@@ -0,0 +1,68 @@
++import type { HarnessId } from '../harnesses';
++import type { HarnessEntry } from './types';
++
++export const HARNESS_REGISTRY: Record<HarnessId, HarnessEntry> = {
++  'claude-code': {
++    id: 'claude-code',
++    displayName: 'Claude Code',
++    verifiedVersion: 'unpinned', // opaque native binary — not version-pinned in harness-versions.insight.md
++    verifiedDate: '2026-09-20',
++    agentsDoc: { mode: 'symlink', symlinkPath: 'CLAUDE.md' },
++    skills: { mode: 'migrate-symlink', symlinkPath: '.claude/skills' },
++  },
++  cursor: {
++    id: 'cursor',
++    displayName: 'Cursor',
++    verifiedVersion: '3.x',
++    verifiedDate: '2026-09-10',
++    agentsDoc: { mode: 'native' },
++    skills: { mode: 'native' },
++  },
++  opencode: {
++    id: 'opencode',
++    displayName: 'OpenCode',
++    verifiedVersion: '1.18.31',
++    verifiedDate: '2026-09-14',
++    agentsDoc: { mode: 'native' },
++    skills: { mode: 'native' },
++  },
++  codex: {
++    id: 'codex',
++    displayName: 'Codex',
++    verifiedVersion: '0.153.2',
++    verifiedDate: '2026-09-03',
++    agentsDoc: { mode: 'native' },
++    skills: { mode: 'native' },
++  },
++  hermes: {
++    id: 'hermes',
++    displayName: 'Hermes',
++    verifiedVersion: '0.21.2',
++    verifiedDate: '2026-09-11',
++    agentsDoc: { mode: 'native' },
++    skills: {
++      mode: 'native',
++      trustGate: {
++        configPathFromHome: '.hermes/config.yaml',
++        trustedDirsKeyPath: ['skills', 'trusted_project_dirs'],
++        trustCommand: 'hermes skills trust',
++      },
++    },
++  },
++  pi: {
++    id: 'pi',
++    displayName: 'Pi',
++    verifiedVersion: '0.85.0',
++    verifiedDate: '2026-09-04',
++    agentsDoc: { mode: 'native' },
++    skills: { mode: 'native' },
++  },
++  deepseek: {
++    id: 'deepseek',
++    displayName: 'DeepSeek Harness',
++    verifiedVersion: '0.1.5-rc.1',
++    verifiedDate: '2026-09-10',
++    agentsDoc: { mode: 'native' },
++    skills: { mode: 'native' },
++  },
++};
+diff --git a/src/registry/index.test.ts b/src/registry/index.test.ts
+new file mode 100644
+index 0000000..14f4fde
+--- /dev/null
++++ b/src/registry/index.test.ts
+@@ -0,0 +1,49 @@
++import { describe, it, expect } from 'vitest';
++import { ALL_HARNESS_IDS } from '../harnesses';
++import { getHarnessEntry } from './index';
++
++describe('harness registry', () => {
++  it('has a fully-populated entry for every recognized harness id', () => {
++    for (const id of ALL_HARNESS_IDS) {
++      const entry = getHarnessEntry(id);
++      expect(entry.id).toBe(id);
++      expect(entry.displayName).toBeTruthy();
++      expect(entry.verifiedVersion).toBeTruthy();
++      expect(entry.verifiedDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
++    }
++  });
++
++  it('marks claude-code as the only symlink-based AGENTS.md wiring', () => {
++    const symlinked = ALL_HARNESS_IDS.filter((id) => getHarnessEntry(id).agentsDoc.mode === 'symlink');
++    expect(symlinked).toEqual(['claude-code']);
++  });
++
++  it('marks claude-code as the only migrate-symlink skills wiring', () => {
++    const migrated = ALL_HARNESS_IDS.filter((id) => getHarnessEntry(id).skills.mode === 'migrate-symlink');
++    expect(migrated).toEqual(['claude-code']);
++  });
++
++  it('marks hermes as the only harness with a trust gate', () => {
++    const gated = ALL_HARNESS_IDS.filter((id) => getHarnessEntry(id).skills.trustGate !== undefined);
++    expect(gated).toEqual(['hermes']);
++  });
++
++  it("hermes's trust gate has a runnable trust command and a dotted config key path", () => {
++    const trustGate = getHarnessEntry('hermes').skills.trustGate;
++    expect(trustGate?.trustCommand).toBe('hermes skills trust');
++    expect(trustGate?.trustedDirsKeyPath).toEqual(['skills', 'trusted_project_dirs']);
++    expect(trustGate?.configPathFromHome).toBe('.hermes/config.yaml');
++  });
++
++  it('pins the exact symlink paths claude-code wires', () => {
++    const entry = getHarnessEntry('claude-code');
++    expect(entry.agentsDoc.symlinkPath).toBe('CLAUDE.md');
++    expect(entry.skills.symlinkPath).toBe('.claude/skills');
++    for (const id of ALL_HARNESS_IDS) {
++      if (id === 'claude-code') continue;
++      const other = getHarnessEntry(id);
++      expect(other.agentsDoc.symlinkPath).toBeUndefined();
++      expect(other.skills.symlinkPath).toBeUndefined();
++    }
++  });
++});
+diff --git a/src/registry/index.ts b/src/registry/index.ts
+new file mode 100644
+index 0000000..a1ce713
+--- /dev/null
++++ b/src/registry/index.ts
+@@ -0,0 +1,10 @@
++import type { HarnessId } from '../harnesses';
++import { HARNESS_REGISTRY } from './data';
++import type { HarnessEntry } from './types';
++
++export function getHarnessEntry(id: HarnessId): HarnessEntry {
++  return HARNESS_REGISTRY[id];
++}
++
++export { HARNESS_REGISTRY };
++export type { HarnessEntry, AgentsDocConvention, SkillsConvention, TrustGateConvention } from './types';
+diff --git a/src/registry/types.ts b/src/registry/types.ts
+new file mode 100644
+index 0000000..d5c82cf
+--- /dev/null
++++ b/src/registry/types.ts
+@@ -0,0 +1,41 @@
++import type { HarnessId } from '../harnesses';
++
++export interface AgentsDocConvention {
++  /** 'native' = harness reads AGENTS.md directly; 'symlink' = harness reads a generated symlink pointing at AGENTS.md. */
++  mode: 'native' | 'symlink';
++  /** Relative path (from repo root) of the symlink harness-hub creates. Only set when mode === 'symlink'. */
++  symlinkPath?: string;
++}
++
++export interface TrustGateConvention {
++  /** Path to the trust ledger, relative to the user's home directory. */
++  configPathFromHome: string;
++  /** Dotted key path inside that (YAML) file holding the list of trusted repo paths. */
++  trustedDirsKeyPath: string[];
++  /** The command a human runs to grant trust — shown verbatim in doctor remediation text. */
++  trustCommand: string;
++}
++
++export interface SkillsConvention {
++  /**
++   * 'native'          = harness reads .agents/skills/ directly, nothing generated.
++   * 'migrate-symlink' = harness reads its own dir; harness-hub adopts pre-existing
++   *                     content into canon (migrate) then symlinks that dir to canon.
++   */
++  mode: 'native' | 'migrate-symlink';
++  /** Relative path (from repo root) of the symlink/real dir this harness reads. Only set for 'migrate-symlink'. */
++  symlinkPath?: string;
++  /** Set only for harnesses that gate loading on a separate trust step (Hermes, MVP). */
++  trustGate?: TrustGateConvention;
++}
++
++export interface HarnessEntry {
++  id: HarnessId;
++  displayName: string;
++  /** The harness version this entry's conventions were last verified against. */
++  verifiedVersion: string;
++  /** ISO 8601 date (YYYY-MM-DD) of that verification. */
++  verifiedDate: string;
++  agentsDoc: AgentsDocConvention;
++  skills: SkillsConvention;
++}
+diff --git a/src/repo.test.ts b/src/repo.test.ts
+new file mode 100644
+index 0000000..891b78e
+--- /dev/null
++++ b/src/repo.test.ts
+@@ -0,0 +1,40 @@
++import { describe, it, expect, beforeEach, afterEach } from 'vitest';
++import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import { findRepoRoot, NotAGitRepoError } from './repo';
++
++describe('findRepoRoot', () => {
++  let root: string;
++
++  beforeEach(() => {
++    root = mkdtempSync(join(tmpdir(), 'hh-repo-'));
++  });
++
++  afterEach(() => {
++    rmSync(root, { recursive: true, force: true });
++  });
++
++  it('finds the repo root when starting at the root itself', () => {
++    mkdirSync(join(root, '.git'));
++    expect(findRepoRoot(root)).toBe(root);
++  });
++
++  it('walks up from a nested subdirectory', () => {
++    mkdirSync(join(root, '.git'));
++    const nested = join(root, 'a', 'b', 'c');
++    mkdirSync(nested, { recursive: true });
++    expect(findRepoRoot(nested)).toBe(root);
++  });
++
++  it('treats a .git file (linked worktree) as a valid marker', () => {
++    writeFileSync(join(root, '.git'), 'gitdir: /somewhere/else\n');
++    expect(findRepoRoot(root)).toBe(root);
++  });
++
++  it('throws NotAGitRepoError when no .git is found', () => {
++    const nested = join(root, 'a', 'b');
++    mkdirSync(nested, { recursive: true });
++    expect(() => findRepoRoot(nested)).toThrow(NotAGitRepoError);
++  });
++});
+diff --git a/src/repo.ts b/src/repo.ts
+new file mode 100644
+index 0000000..36519cc
+--- /dev/null
++++ b/src/repo.ts
+@@ -0,0 +1,30 @@
++import { existsSync } from 'node:fs';
++import { dirname, join } from 'node:path';
++
++export class NotAGitRepoError extends Error {
++  constructor(startDir: string) {
++    super(`Not a git repository (or any parent up to "${startDir}"'s filesystem root): no .git found.`);
++    this.name = 'NotAGitRepoError';
++  }
++}
++
++/**
++ * Walks up from `startDir` to find the nearest ancestor directory containing
++ * a `.git` entry (directory for a normal checkout, file for a linked
++ * worktree/submodule). Matches the resolution Hermes itself uses for
++ * project trust (spec §6), so harness-hub and Hermes agree on "which repo
++ * is this."
++ */
++export function findRepoRoot(startDir: string): string {
++  let dir = startDir;
++  for (;;) {
++    if (existsSync(join(dir, '.git'))) {
++      return dir;
++    }
++    const parent = dirname(dir);
++    if (parent === dir) {
++      throw new NotAGitRepoError(startDir);
++    }
++    dir = parent;
++  }
++}
+diff --git a/src/skills/skillMigrationPlan.test.ts b/src/skills/skillMigrationPlan.test.ts
+new file mode 100644
+index 0000000..e13207c
+--- /dev/null
++++ b/src/skills/skillMigrationPlan.test.ts
+@@ -0,0 +1,45 @@
++import { describe, it, expect, beforeEach, afterEach } from 'vitest';
++import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import { planSkillMigration } from './skillMigrationPlan';
++import { getHarnessEntry } from '../registry';
++
++describe('planSkillMigration', () => {
++  let repoRoot: string;
++  const claudeCode = getHarnessEntry('claude-code');
++
++  beforeEach(() => {
++    repoRoot = mkdtempSync(join(tmpdir(), 'hh-migplan-'));
++  });
++  afterEach(() => {
++    rmSync(repoRoot, { recursive: true, force: true });
++  });
++
++  it('returns an empty plan when .claude/skills does not exist', () => {
++    expect(planSkillMigration(repoRoot, claudeCode)).toEqual([]);
++  });
++
++  it('classifies a skill with no canon counterpart as new', () => {
++    mkdirSync(join(repoRoot, '.claude', 'skills', 'a'), { recursive: true });
++    writeFileSync(join(repoRoot, '.claude', 'skills', 'a', 'SKILL.md'), 'body');
++    const plan = planSkillMigration(repoRoot, claudeCode);
++    expect(plan).toEqual([expect.objectContaining({ name: 'a', classification: 'new' })]);
++  });
++
++  it('classifies a byte-identical skill as identical', () => {
++    mkdirSync(join(repoRoot, '.claude', 'skills', 'a'), { recursive: true });
++    mkdirSync(join(repoRoot, '.agents', 'skills', 'a'), { recursive: true });
++    writeFileSync(join(repoRoot, '.claude', 'skills', 'a', 'SKILL.md'), 'body');
++    writeFileSync(join(repoRoot, '.agents', 'skills', 'a', 'SKILL.md'), 'body');
++    expect(planSkillMigration(repoRoot, claudeCode)[0].classification).toBe('identical');
++  });
++
++  it('classifies a differing skill as a collision', () => {
++    mkdirSync(join(repoRoot, '.claude', 'skills', 'a'), { recursive: true });
++    mkdirSync(join(repoRoot, '.agents', 'skills', 'a'), { recursive: true });
++    writeFileSync(join(repoRoot, '.claude', 'skills', 'a', 'SKILL.md'), 'body-one');
++    writeFileSync(join(repoRoot, '.agents', 'skills', 'a', 'SKILL.md'), 'body-two');
++    expect(planSkillMigration(repoRoot, claudeCode)[0].classification).toBe('collision');
++  });
++});
+diff --git a/src/skills/skillMigrationPlan.ts b/src/skills/skillMigrationPlan.ts
+new file mode 100644
+index 0000000..90c64d6
+--- /dev/null
++++ b/src/skills/skillMigrationPlan.ts
+@@ -0,0 +1,40 @@
++import { existsSync, readdirSync } from 'node:fs';
++import { join } from 'node:path';
++import { dirsByteIdentical } from '../fsutil';
++import { skillsRootDir } from '../canon';
++import type { HarnessEntry } from '../registry';
++
++export interface SkillMigrationEntryPlan {
++  name: string;
++  harnessSkillPath: string;
++  canonSkillPath: string;
++  classification: 'new' | 'identical' | 'collision';
++}
++
++/** Directory names directly under a migrate-symlink harness's own skills dir. Empty if that dir is absent, or the harness isn't migrate-symlink. */
++export function listHarnessSkillDirNames(repoRoot: string, entry: HarnessEntry): string[] {
++  if (entry.skills.mode !== 'migrate-symlink' || !entry.skills.symlinkPath) return [];
++  const dir = join(repoRoot, entry.skills.symlinkPath);
++  if (!existsSync(dir)) return [];
++  return readdirSync(dir, { withFileTypes: true })
++    .filter((e) => e.isDirectory())
++    .map((e) => e.name);
++}
++
++/** Classifies every entry under a migrate-symlink harness's own skills dir against canon `.agents/skills/<name>/`. */
++export function planSkillMigration(repoRoot: string, entry: HarnessEntry): SkillMigrationEntryPlan[] {
++  if (!entry.skills.symlinkPath) return [];
++  return listHarnessSkillDirNames(repoRoot, entry).map((name) => {
++    const harnessSkillPath = join(repoRoot, entry.skills.symlinkPath as string, name);
++    const canonSkillPath = join(skillsRootDir(repoRoot), name);
++    let classification: SkillMigrationEntryPlan['classification'];
++    if (!existsSync(canonSkillPath)) {
++      classification = 'new';
++    } else if (dirsByteIdentical(harnessSkillPath, canonSkillPath)) {
++      classification = 'identical';
++    } else {
++      classification = 'collision';
++    }
++    return { name, harnessSkillPath, canonSkillPath, classification };
++  });
++}
+diff --git a/src/skills/validate.test.ts b/src/skills/validate.test.ts
+new file mode 100644
+index 0000000..c291fb8
+--- /dev/null
++++ b/src/skills/validate.test.ts
+@@ -0,0 +1,45 @@
++import { describe, it, expect } from 'vitest';
++import { validateSkillFrontmatter } from './validate';
++
++describe('validateSkillFrontmatter', () => {
++  it('passes a valid skill', () => {
++    const issues = validateSkillFrontmatter('writing-tests', {
++      name: 'writing-tests',
++      description: 'How to write tests.',
++    });
++    expect(issues).toEqual([]);
++  });
++
++  it('flags a missing name', () => {
++    const issues = validateSkillFrontmatter('writing-tests', { description: 'x' });
++    expect(issues.map((i) => i.code)).toContain('missing-name');
++  });
++
++  it('flags an invalid name format (uppercase)', () => {
++    const issues = validateSkillFrontmatter('Writing-Tests', { name: 'Writing-Tests', description: 'x' });
++    expect(issues.map((i) => i.code)).toContain('invalid-name-format');
++  });
++
++  it('flags consecutive hyphens', () => {
++    const issues = validateSkillFrontmatter('writing--tests', { name: 'writing--tests', description: 'x' });
++    expect(issues.map((i) => i.code)).toContain('invalid-name-format');
++  });
++
++  it('flags a name that does not match its directory', () => {
++    const issues = validateSkillFrontmatter('writing-tests', { name: 'other-name', description: 'x' });
++    expect(issues.map((i) => i.code)).toContain('name-mismatch');
++  });
++
++  it('flags a missing description', () => {
++    const issues = validateSkillFrontmatter('writing-tests', { name: 'writing-tests' });
++    expect(issues.map((i) => i.code)).toContain('missing-description');
++  });
++
++  it('flags a description over 1024 chars', () => {
++    const issues = validateSkillFrontmatter('writing-tests', {
++      name: 'writing-tests',
++      description: 'x'.repeat(1025),
++    });
++    expect(issues.map((i) => i.code)).toContain('description-length');
++  });
++});
+diff --git a/src/skills/validate.ts b/src/skills/validate.ts
+new file mode 100644
+index 0000000..af95560
+--- /dev/null
++++ b/src/skills/validate.ts
+@@ -0,0 +1,51 @@
++export interface FrontmatterIssue {
++  code:
++    | 'missing-name'
++    | 'invalid-name-format'
++    | 'name-mismatch'
++    | 'missing-description'
++    | 'description-length';
++  message: string;
++}
++
++const NAME_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/;
++
++export function validateSkillFrontmatter(
++  dirName: string,
++  frontmatter: Record<string, unknown> | undefined
++): FrontmatterIssue[] {
++  const issues: FrontmatterIssue[] = [];
++  const name = frontmatter?.['name'];
++  const description = frontmatter?.['description'];
++
++  if (typeof name !== 'string' || name.length === 0) {
++    issues.push({ code: 'missing-name', message: `Skill "${dirName}": frontmatter "name" is missing or empty.` });
++  } else {
++    if (name.length > 64 || !NAME_PATTERN.test(name)) {
++      issues.push({
++        code: 'invalid-name-format',
++        message: `Skill "${dirName}": "name" must be 1-64 chars, lowercase a-z0-9 and single hyphens, no leading/trailing/consecutive hyphens (got "${name}").`,
++      });
++    }
++    if (name !== dirName) {
++      issues.push({
++        code: 'name-mismatch',
++        message: `Skill "${dirName}": frontmatter "name" ("${name}") must equal the parent directory name.`,
++      });
++    }
++  }
++
++  if (typeof description !== 'string' || description.length === 0) {
++    issues.push({
++      code: 'missing-description',
++      message: `Skill "${dirName}": frontmatter "description" is missing or empty.`,
++    });
++  } else if (description.length > 1024) {
++    issues.push({
++      code: 'description-length',
++      message: `Skill "${dirName}": "description" must be 1-1024 chars (got ${description.length}).`,
++    });
++  }
++
++  return issues;
++}
+diff --git a/src/version.test.ts b/src/version.test.ts
+new file mode 100644
+index 0000000..7ac040c
+--- /dev/null
++++ b/src/version.test.ts
+@@ -0,0 +1,10 @@
++// src/version.test.ts
++import { describe, it, expect } from 'vitest';
++import { getPackageVersion } from './version';
++
++describe('getPackageVersion', () => {
++  it('returns the version string from package.json', () => {
++    const version = getPackageVersion();
++    expect(version).toBe('0.1.0');
++  });
++});
+diff --git a/src/version.ts b/src/version.ts
+new file mode 100644
+index 0000000..d61ddf4
+--- /dev/null
++++ b/src/version.ts
+@@ -0,0 +1,9 @@
++// src/version.ts
++import { readFileSync } from 'node:fs';
++import { join } from 'node:path';
++
++export function getPackageVersion(): string {
++  const pkgPath = join(__dirname, '..', 'package.json');
++  const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as { version: string };
++  return pkg.version;
++}
+diff --git a/src/wiring/migrateSymlink.test.ts b/src/wiring/migrateSymlink.test.ts
+new file mode 100644
+index 0000000..2355543
+--- /dev/null
++++ b/src/wiring/migrateSymlink.test.ts
+@@ -0,0 +1,55 @@
++// src/wiring/migrateSymlink.test.ts
++import { describe, it, expect, beforeEach, afterEach } from 'vitest';
++import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, lstatSync, readlinkSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import { wireMigrateSymlinkHarness } from './migrateSymlink';
++import { getHarnessEntry } from '../registry';
++
++describe('wireMigrateSymlinkHarness', () => {
++  let repoRoot: string;
++  beforeEach(() => {
++    repoRoot = mkdtempSync(join(tmpdir(), 'hh-wiring-'));
++    writeFileSync(join(repoRoot, 'AGENTS.md'), '# Agents\n');
++  });
++  afterEach(() => {
++    rmSync(repoRoot, { recursive: true, force: true });
++  });
++
++  it('creates both symlinks from a clean repo', () => {
++    wireMigrateSymlinkHarness(repoRoot, getHarnessEntry('claude-code'));
++
++    expect(readlinkSync(join(repoRoot, 'CLAUDE.md'))).toBe('AGENTS.md');
++    expect(readlinkSync(join(repoRoot, '.claude', 'skills'))).toBe(join('..', '.agents', 'skills'));
++  });
++
++  it('is idempotent when the symlinks already exist', () => {
++    wireMigrateSymlinkHarness(repoRoot, getHarnessEntry('claude-code'));
++    wireMigrateSymlinkHarness(repoRoot, getHarnessEntry('claude-code'));
++    expect(lstatSync(join(repoRoot, 'CLAUDE.md')).isSymbolicLink()).toBe(true);
++  });
++
++  it('replaces a real .claude/skills directory that only contains already-migrated content', () => {
++    mkdirSync(join(repoRoot, '.agents', 'skills', 'a'), { recursive: true });
++    writeFileSync(join(repoRoot, '.agents', 'skills', 'a', 'SKILL.md'), 'body');
++    mkdirSync(join(repoRoot, '.claude', 'skills', 'a'), { recursive: true });
++    writeFileSync(join(repoRoot, '.claude', 'skills', 'a', 'SKILL.md'), 'body');
++
++    wireMigrateSymlinkHarness(repoRoot, getHarnessEntry('claude-code'));
++
++    expect(lstatSync(join(repoRoot, '.claude', 'skills')).isSymbolicLink()).toBe(true);
++  });
++
++  it('replaces a foreign CLAUDE.md (the --force path)', () => {
++    writeFileSync(join(repoRoot, 'CLAUDE.md'), '# hand-written\n');
++    wireMigrateSymlinkHarness(repoRoot, getHarnessEntry('claude-code'));
++    expect(readlinkSync(join(repoRoot, 'CLAUDE.md'))).toBe('AGENTS.md');
++  });
++
++  it('adds both paths to .gitignore', () => {
++    wireMigrateSymlinkHarness(repoRoot, getHarnessEntry('claude-code'));
++    const gitignore = readFileSync(join(repoRoot, '.gitignore'), 'utf8');
++    expect(gitignore).toContain('CLAUDE.md');
++    expect(gitignore).toContain('.claude/skills');
++  });
++});
+diff --git a/src/wiring/migrateSymlink.ts b/src/wiring/migrateSymlink.ts
+new file mode 100644
+index 0000000..305db39
+--- /dev/null
++++ b/src/wiring/migrateSymlink.ts
+@@ -0,0 +1,48 @@
++// src/wiring/migrateSymlink.ts
++import { lstatSync, mkdirSync, rmSync, symlinkSync } from 'node:fs';
++import { dirname, join } from 'node:path';
++import { ensureGitignoreEntries, isSymlinkTo, relativeSymlinkTarget } from '../fsutil';
++import { skillsRootDir, AGENTS_MD_FILENAME } from '../canon';
++import type { HarnessEntry } from '../registry';
++
++/** True if `linkPath` is present as a symlink, dangling or not (unlike existsSync, which follows links). */
++function pathPresent(linkPath: string): boolean {
++  try {
++    lstatSync(linkPath);
++    return true;
++  } catch {
++    return false;
++  }
++}
++
++function ensureSymlink(repoRoot: string, linkRelPath: string, targetAbsPath: string): void {
++  const linkAbsPath = join(repoRoot, linkRelPath);
++  const target = relativeSymlinkTarget(repoRoot, linkRelPath, targetAbsPath);
++  if (pathPresent(linkAbsPath) && !isSymlinkTo(linkAbsPath, target)) {
++    rmSync(linkAbsPath, { recursive: true, force: true });
++  }
++  if (!pathPresent(linkAbsPath)) {
++    mkdirSync(dirname(linkAbsPath), { recursive: true });
++    symlinkSync(target, linkAbsPath);
++  }
++}
++
++/**
++ * Wires a harness's AGENTS.md symlink and/or skills symlink per its registry
++ * entry. Assumes doctor's blocking checks (clobber-risk, unmigrated-skills,
++ * skill-migration-collision) already passed for this harness.
++ */
++export function wireMigrateSymlinkHarness(repoRoot: string, entry: HarnessEntry): void {
++  if (entry.skills.mode === 'migrate-symlink' && entry.skills.symlinkPath) {
++    ensureSymlink(repoRoot, entry.skills.symlinkPath, skillsRootDir(repoRoot));
++  }
++  if (entry.agentsDoc.mode === 'symlink' && entry.agentsDoc.symlinkPath) {
++    ensureSymlink(repoRoot, entry.agentsDoc.symlinkPath, join(repoRoot, AGENTS_MD_FILENAME));
++  }
++  const gitignoreEntries = [entry.agentsDoc.symlinkPath, entry.skills.symlinkPath].filter(
++    (p): p is string => Boolean(p)
++  );
++  if (gitignoreEntries.length > 0) {
++    ensureGitignoreEntries(repoRoot, gitignoreEntries);
++  }
++}
+diff --git a/tsconfig.json b/tsconfig.json
+new file mode 100644
+index 0000000..45de767
+--- /dev/null
++++ b/tsconfig.json
+@@ -0,0 +1,17 @@
++{
++  "compilerOptions": {
++    "target": "ES2022",
++    "module": "CommonJS",
++    "lib": ["ES2022"],
++    "outDir": "dist",
++    "rootDir": "src",
++    "strict": true,
++    "types": ["node"],
++    "esModuleInterop": true,
++    "skipLibCheck": true,
++    "declaration": false,
++    "sourceMap": true
++  },
++  "include": ["src/**/*.ts"],
++  "exclude": ["src/**/*.test.ts", "dist", "node_modules"]
++}
+diff --git a/vitest.config.ts b/vitest.config.ts
+new file mode 100644
+index 0000000..96eb6ab
+--- /dev/null
++++ b/vitest.config.ts
+@@ -0,0 +1,8 @@
++import { defineConfig } from 'vitest/config';
++
++export default defineConfig({
++  test: {
++    include: ['src/**/*.test.ts'],
++    environment: 'node',
++  },
++});

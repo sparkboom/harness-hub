@@ -1,0 +1,38 @@
+# Review package: 73036c8..HEAD
+
+## Commits
+0151a84 feat: declarative harness-conventions registry
+
+## Files changed
+ src/registry/index.test.ts | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+## Diff
+diff --git a/src/registry/index.test.ts b/src/registry/index.test.ts
+index ae1d750..14f4fde 100644
+--- a/src/registry/index.test.ts
++++ b/src/registry/index.test.ts
+@@ -27,11 +27,23 @@ describe('harness registry', () => {
+     const gated = ALL_HARNESS_IDS.filter((id) => getHarnessEntry(id).skills.trustGate !== undefined);
+     expect(gated).toEqual(['hermes']);
+   });
+ 
+   it("hermes's trust gate has a runnable trust command and a dotted config key path", () => {
+     const trustGate = getHarnessEntry('hermes').skills.trustGate;
+     expect(trustGate?.trustCommand).toBe('hermes skills trust');
+     expect(trustGate?.trustedDirsKeyPath).toEqual(['skills', 'trusted_project_dirs']);
+     expect(trustGate?.configPathFromHome).toBe('.hermes/config.yaml');
+   });
++
++  it('pins the exact symlink paths claude-code wires', () => {
++    const entry = getHarnessEntry('claude-code');
++    expect(entry.agentsDoc.symlinkPath).toBe('CLAUDE.md');
++    expect(entry.skills.symlinkPath).toBe('.claude/skills');
++    for (const id of ALL_HARNESS_IDS) {
++      if (id === 'claude-code') continue;
++      const other = getHarnessEntry(id);
++      expect(other.agentsDoc.symlinkPath).toBeUndefined();
++      expect(other.skills.symlinkPath).toBeUndefined();
++    }
++  });
+ });

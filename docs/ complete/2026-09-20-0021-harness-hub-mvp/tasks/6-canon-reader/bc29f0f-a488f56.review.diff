@@ -1,0 +1,129 @@
+# Review package: bc29f0f..HEAD
+
+## Commits
+a488f56 feat: canon reader (AGENTS.md presence, skill dir listing, frontmatter)
+
+## Files changed
+ src/canon.test.ts | 58 +++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ src/canon.ts      | 48 +++++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 106 insertions(+)
+
+## Diff
+diff --git a/src/canon.test.ts b/src/canon.test.ts
+new file mode 100644
+index 0000000..87f72a3
+--- /dev/null
++++ b/src/canon.test.ts
+@@ -0,0 +1,58 @@
++import { describe, it, expect, beforeEach, afterEach } from 'vitest';
++import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import {
++  hasAgentsMd,
++  listSkillDirNames,
++  listSkillsRootNonDirEntries,
++  readSkillFrontmatter,
++} from './canon';
++
++describe('canon', () => {
++  let repoRoot: string;
++
++  beforeEach(() => {
++    repoRoot = mkdtempSync(join(tmpdir(), 'hh-canon-'));
++  });
++
++  afterEach(() => {
++    rmSync(repoRoot, { recursive: true, force: true });
++  });
++
++  it('detects AGENTS.md presence', () => {
++    expect(hasAgentsMd(repoRoot)).toBe(false);
++    writeFileSync(join(repoRoot, 'AGENTS.md'), '# Agents\n');
++    expect(hasAgentsMd(repoRoot)).toBe(true);
++  });
++
++  it('returns an empty list when .agents/skills is absent', () => {
++    expect(listSkillDirNames(repoRoot)).toEqual([]);
++  });
++
++  it('lists only directories under .agents/skills, and reports stray non-dir entries separately', () => {
++    const skillsDir = join(repoRoot, '.agents', 'skills');
++    mkdirSync(join(skillsDir, 'writing-tests'), { recursive: true });
++    mkdirSync(join(skillsDir, 'debugging'), { recursive: true });
++    writeFileSync(join(skillsDir, 'stray.md'), '# stray\n');
++    expect(listSkillDirNames(repoRoot).sort()).toEqual(['debugging', 'writing-tests']);
++    expect(listSkillsRootNonDirEntries(repoRoot)).toEqual(['stray.md']);
++  });
++
++  it('reads a skill SKILL.md frontmatter', () => {
++    const skillDir = join(repoRoot, '.agents', 'skills', 'writing-tests');
++    mkdirSync(skillDir, { recursive: true });
++    writeFileSync(
++      join(skillDir, 'SKILL.md'),
++      '---\nname: writing-tests\ndescription: How to write tests.\n---\n\nBody text.\n'
++    );
++    const result = readSkillFrontmatter(repoRoot, 'writing-tests');
++    expect(result.hasSkillMd).toBe(true);
++    expect(result.frontmatter).toEqual({ name: 'writing-tests', description: 'How to write tests.' });
++  });
++
++  it('reports hasSkillMd: false when SKILL.md is missing', () => {
++    mkdirSync(join(repoRoot, '.agents', 'skills', 'empty-dir'), { recursive: true });
++    expect(readSkillFrontmatter(repoRoot, 'empty-dir').hasSkillMd).toBe(false);
++  });
++});
+diff --git a/src/canon.ts b/src/canon.ts
+new file mode 100644
+index 0000000..c983a79
+--- /dev/null
++++ b/src/canon.ts
+@@ -0,0 +1,48 @@
++import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
++import { join } from 'node:path';
++import matter from 'gray-matter';
++
++export const AGENTS_MD_FILENAME = 'AGENTS.md';
++export const SKILLS_DIR = join('.agents', 'skills');
++
++export function hasAgentsMd(repoRoot: string): boolean {
++  return existsSync(join(repoRoot, AGENTS_MD_FILENAME));
++}
++
++export function skillsRootDir(repoRoot: string): string {
++  return join(repoRoot, SKILLS_DIR);
++}
++
++/** Every direct child directory of .agents/skills/, by name. Empty array if the dir is absent. */
++export function listSkillDirNames(repoRoot: string): string[] {
++  const root = skillsRootDir(repoRoot);
++  if (!existsSync(root)) return [];
++  return readdirSync(root, { withFileTypes: true })
++    .filter((entry) => entry.isDirectory())
++    .map((entry) => entry.name);
++}
++
++/** Any entry directly under .agents/skills/ that is NOT a directory (e.g. a stray flat .md file). */
++export function listSkillsRootNonDirEntries(repoRoot: string): string[] {
++  const root = skillsRootDir(repoRoot);
++  if (!existsSync(root)) return [];
++  return readdirSync(root, { withFileTypes: true })
++    .filter((entry) => !entry.isDirectory())
++    .map((entry) => entry.name);
++}
++
++export interface SkillFrontmatterResult {
++  hasSkillMd: boolean;
++  frontmatter?: Record<string, unknown>;
++}
++
++/** Reads <skillsRoot>/<name>/SKILL.md's frontmatter, if the file exists. */
++export function readSkillFrontmatter(repoRoot: string, name: string): SkillFrontmatterResult {
++  const skillMdPath = join(skillsRootDir(repoRoot), name, 'SKILL.md');
++  if (!existsSync(skillMdPath) || !statSync(skillMdPath).isFile()) {
++    return { hasSkillMd: false };
++  }
++  const raw = readFileSync(skillMdPath, 'utf8');
++  const parsed = matter(raw);
++  return { hasSkillMd: true, frontmatter: parsed.data };
++}

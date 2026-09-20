@@ -1,0 +1,125 @@
+# Review package: a21c754..bfcebdf
+
+## Commits
+bfcebdf feat: migrate command
+
+## Files changed
+ src/commands/migrate.test.ts | 55 ++++++++++++++++++++++++++++++++++++++++++++
+ src/commands/migrate.ts      | 47 +++++++++++++++++++++++++++++++++++++
+ 2 files changed, 102 insertions(+)
+
+## Diff
+diff --git a/src/commands/migrate.test.ts b/src/commands/migrate.test.ts
+new file mode 100644
+index 0000000..b668a52
+--- /dev/null
++++ b/src/commands/migrate.test.ts
+@@ -0,0 +1,55 @@
++// src/commands/migrate.test.ts
++import { describe, it, expect, beforeEach, afterEach } from 'vitest';
++import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import { migrateHarness } from './migrate';
++
++describe('migrateHarness', () => {
++  let repoRoot: string;
++  beforeEach(() => {
++    repoRoot = mkdtempSync(join(tmpdir(), 'hh-migrate-'));
++  });
++  afterEach(() => {
++    rmSync(repoRoot, { recursive: true, force: true });
++  });
++
++  it('errors for any harness other than claude-code', () => {
++    const result = migrateHarness(repoRoot, 'cursor');
++    expect(result.exitCode).toBe(1);
++    expect(result.output).toContain('cursor');
++  });
++
++  it('reports nothing to migrate when .claude/skills is empty or absent', () => {
++    const result = migrateHarness(repoRoot, 'claude-code');
++    expect(result.exitCode).toBe(0);
++    expect(result.output).toContain('nothing to migrate');
++  });
++
++  it('copies a new skill into canon without touching .claude/skills', () => {
++    mkdirSync(join(repoRoot, '.claude', 'skills', 'a'), { recursive: true });
++    writeFileSync(join(repoRoot, '.claude', 'skills', 'a', 'SKILL.md'), 'body');
++    const result = migrateHarness(repoRoot, 'claude-code');
++    expect(result.exitCode).toBe(0);
++    expect(readFileSync(join(repoRoot, '.agents', 'skills', 'a', 'SKILL.md'), 'utf8')).toBe('body');
++    expect(existsSync(join(repoRoot, '.claude', 'skills', 'a', 'SKILL.md'))).toBe(true);
++  });
++
++  it('errors on a collision without copying anything', () => {
++    mkdirSync(join(repoRoot, '.claude', 'skills', 'a'), { recursive: true });
++    mkdirSync(join(repoRoot, '.agents', 'skills', 'a'), { recursive: true });
++    writeFileSync(join(repoRoot, '.claude', 'skills', 'a', 'SKILL.md'), 'one');
++    writeFileSync(join(repoRoot, '.agents', 'skills', 'a', 'SKILL.md'), 'two');
++    const result = migrateHarness(repoRoot, 'claude-code');
++    expect(result.exitCode).toBe(1);
++    expect(readFileSync(join(repoRoot, '.agents', 'skills', 'a', 'SKILL.md'), 'utf8')).toBe('two');
++  });
++
++  it('is a no-op the second time it runs', () => {
++    mkdirSync(join(repoRoot, '.claude', 'skills', 'a'), { recursive: true });
++    writeFileSync(join(repoRoot, '.claude', 'skills', 'a', 'SKILL.md'), 'body');
++    migrateHarness(repoRoot, 'claude-code');
++    const second = migrateHarness(repoRoot, 'claude-code');
++    expect(second.output).toContain('nothing to migrate');
++  });
++});
+diff --git a/src/commands/migrate.ts b/src/commands/migrate.ts
+new file mode 100644
+index 0000000..18c39a0
+--- /dev/null
++++ b/src/commands/migrate.ts
+@@ -0,0 +1,47 @@
++// src/commands/migrate.ts
++import { copyDirRecursive } from '../fsutil';
++import { planSkillMigration } from '../skills/skillMigrationPlan';
++import { getHarnessEntry } from '../registry';
++import type { HarnessId } from '../harnesses';
++
++export interface MigrateCommandResult {
++  output: string;
++  exitCode: number;
++}
++
++export function migrateHarness(repoRoot: string, harnessId: HarnessId): MigrateCommandResult {
++  const entry = getHarnessEntry(harnessId);
++  if (entry.skills.mode !== 'migrate-symlink') {
++    return {
++      output: `harness-hub migrate: nothing to do for "${harnessId}" — it reads canon natively with no pre-existing content to adopt in this deliverable.`,
++      exitCode: 1,
++    };
++  }
++
++  const plan = planSkillMigration(repoRoot, entry);
++
++  const collisions = plan.filter((e) => e.classification === 'collision');
++  if (collisions.length > 0) {
++    const lines = collisions.map(
++      (e) => `  ${entry.skills.symlinkPath}/${e.name}/SKILL.md differs from .agents/skills/${e.name}/SKILL.md`
++    );
++    return {
++      output: `harness-hub migrate: skill migration collision(s), fix by hand and re-run:\n${lines.join('\n')}`,
++      exitCode: 1,
++    };
++  }
++
++  const toCopy = plan.filter((e) => e.classification === 'new');
++  if (toCopy.length === 0) {
++    return { output: 'harness-hub migrate: nothing to migrate.', exitCode: 0 };
++  }
++
++  for (const planEntry of toCopy) {
++    copyDirRecursive(planEntry.harnessSkillPath, planEntry.canonSkillPath);
++  }
++
++  return {
++    output: `harness-hub migrate: adopted ${toCopy.length} skill(s) into canon: ${toCopy.map((e) => e.name).join(', ')}`,
++    exitCode: 0,
++  };
++}

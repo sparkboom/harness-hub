@@ -1,0 +1,79 @@
+# Review package: f888c76..95b4334
+
+## Commits
+95b4334 feat: doctor command (runs all rules, formats findings, sets exit code)
+
+## Files changed
+ src/commands/doctor.test.ts | 29 +++++++++++++++++++++++++++++
+ src/commands/doctor.ts      | 27 +++++++++++++++++++++++++++
+ 2 files changed, 56 insertions(+)
+
+## Diff
+diff --git a/src/commands/doctor.test.ts b/src/commands/doctor.test.ts
+new file mode 100644
+index 0000000..7f8ec2a
+--- /dev/null
++++ b/src/commands/doctor.test.ts
+@@ -0,0 +1,29 @@
++// src/commands/doctor.test.ts
++import { describe, it, expect, beforeEach, afterEach } from 'vitest';
++import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import { runDoctorCommand } from './doctor';
++
++describe('runDoctorCommand', () => {
++  let repoRoot: string;
++  beforeEach(() => {
++    repoRoot = mkdtempSync(join(tmpdir(), 'hh-doctorcmd-'));
++  });
++  afterEach(() => {
++    rmSync(repoRoot, { recursive: true, force: true });
++  });
++
++  it('exits non-zero when AGENTS.md is missing', () => {
++    const result = runDoctorCommand(repoRoot);
++    expect(result.exitCode).toBe(1);
++    expect(result.output).toContain('AGENTS.md');
++  });
++
++  it('exits zero for a minimal valid repo', () => {
++    writeFileSync(join(repoRoot, 'AGENTS.md'), '# Agents\n');
++    const result = runDoctorCommand(repoRoot);
++    expect(result.exitCode).toBe(0);
++    expect(result.output).toContain('no issues found');
++  });
++});
+diff --git a/src/commands/doctor.ts b/src/commands/doctor.ts
+new file mode 100644
+index 0000000..de4f116
+--- /dev/null
++++ b/src/commands/doctor.ts
+@@ -0,0 +1,27 @@
++// src/commands/doctor.ts
++import { buildDoctorContext } from '../doctor/context';
++import { runDoctor } from '../doctor/run';
++import { ALL_DOCTOR_RULES } from '../doctor/rules';
++import type { Finding } from '../doctor/types';
++
++export interface DoctorCommandResult {
++  findings: Finding[];
++  output: string;
++  exitCode: number;
++}
++
++export function formatFindings(findings: Finding[]): string {
++  if (findings.length === 0) {
++    return 'harness-hub doctor: no issues found.';
++  }
++  return findings
++    .map((f) => `[${f.severity.toUpperCase()}] (${f.ruleId}) ${f.message}\n  \u2192 ${f.remediation}`)
++    .join('\n');
++}
++
++export function runDoctorCommand(repoRoot: string, homeDir?: string): DoctorCommandResult {
++  const ctx = buildDoctorContext(repoRoot, [], homeDir);
++  const findings = runDoctor(ctx, ALL_DOCTOR_RULES);
++  const exitCode = findings.some((f) => f.severity === 'error') ? 1 : 0;
++  return { findings, output: formatFindings(findings), exitCode };
++}

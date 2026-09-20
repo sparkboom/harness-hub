@@ -1,0 +1,258 @@
+# Review package: 3e24cb4..b7fd939
+
+## Commits
+b7fd939 fix: enable refreshes drifted wiring for already-enabled harnesses (spec §8)
+2a189a4 fix: migrate validates entries against the skill contract before adopting (spec §6)
+
+## Files changed
+ src/commands/enable.test.ts  | 30 ++++++++++++++++++++++++++++++
+ src/commands/enable.ts       | 14 ++++++++++++++
+ src/commands/migrate.test.ts | 37 ++++++++++++++++++++++++++++++++++---
+ src/commands/migrate.ts      | 39 +++++++++++++++++++++++++++++++++++++++
+ 4 files changed, 117 insertions(+), 3 deletions(-)
+
+## Diff
+diff --git a/src/commands/enable.test.ts b/src/commands/enable.test.ts
+index c020ede..5355c17 100644
+--- a/src/commands/enable.test.ts
++++ b/src/commands/enable.test.ts
+@@ -129,11 +129,41 @@ describe('enableHarnesses', () => {
+   });
+ 
+   it('processes multiple harnesses independently: one succeeds, one blocks', () => {
+     writeFileSync(join(repoRoot, 'CLAUDE.md'), '# hand-written\n');
+     const result = enableHarnesses(repoRoot, ['cursor', 'claude-code']);
+     expect(result.exitCode).toBe(1);
+     expect(result.results.find((r) => r.harnessId === 'cursor')?.status).toBe('enabled');
+     expect(result.results.find((r) => r.harnessId === 'claude-code')?.status).toBe('blocked');
+     expect(readConfiguredHarnesses(repoRoot)).toEqual(['cursor']);
+   });
++
++  it('repairs drifted symlinks when re-enabling an already-enabled harness', () => {
++    enableHarnesses(repoRoot, ['claude-code']);
++    rmSync(join(repoRoot, 'CLAUDE.md'));
++    const result = enableHarnesses(repoRoot, ['claude-code']);
++    expect(result.exitCode).toBe(0);
++    expect(result.results[0].status).toBe('already-enabled');
++    expect(lstatSync(join(repoRoot, 'CLAUDE.md')).isSymbolicLink()).toBe(true);
++    expect(readlinkSync(join(repoRoot, 'CLAUDE.md'))).toBe('AGENTS.md');
++  });
++
++  it('does not clobber a foreign file on drift-repair without --force', () => {
++    enableHarnesses(repoRoot, ['claude-code']);
++    rmSync(join(repoRoot, 'CLAUDE.md'));
++    writeFileSync(join(repoRoot, 'CLAUDE.md'), '# hand-written\n');
++    const result = enableHarnesses(repoRoot, ['claude-code']);
++    expect(result.results[0].status).toBe('blocked');
++    expect(result.results[0].blockingFindings[0].ruleId).toBe('clobber-risk');
++    expect(readFileSync(join(repoRoot, 'CLAUDE.md'), 'utf8')).toBe('# hand-written\n');
++  });
++
++  it('repairs drifted symlinks past a foreign file with --force', () => {
++    enableHarnesses(repoRoot, ['claude-code']);
++    rmSync(join(repoRoot, 'CLAUDE.md'));
++    writeFileSync(join(repoRoot, 'CLAUDE.md'), '# hand-written\n');
++    const result = enableHarnesses(repoRoot, ['claude-code'], { force: true });
++    expect(result.exitCode).toBe(0);
++    expect(lstatSync(join(repoRoot, 'CLAUDE.md')).isSymbolicLink()).toBe(true);
++    expect(readlinkSync(join(repoRoot, 'CLAUDE.md'))).toBe('AGENTS.md');
++  });
+ });
+diff --git a/src/commands/enable.ts b/src/commands/enable.ts
+index cb6e12d..8f6ff3c 100644
+--- a/src/commands/enable.ts
++++ b/src/commands/enable.ts
+@@ -39,20 +39,34 @@ export function enableHarnesses(
+       results: harnessIds.map((harnessId) => ({ harnessId, status: 'blocked', blockingFindings: globalBlocking })),
+       exitCode: 1,
+     };
+   }
+ 
+   const results: EnableHarnessResult[] = [];
+   const newlyEnabled: HarnessId[] = [];
+ 
+   for (const harnessId of harnessIds) {
+     if (alreadyEnabled.includes(harnessId)) {
++      const entry = getHarnessEntry(harnessId);
++      const harnessFindings = allFindings.filter((f) => f.harnessId === harnessId);
++      const blocking = harnessFindings.filter((f) => f.severity === 'error' && (!f.forceable || !options.force));
++      if (blocking.length > 0) {
++        results.push({ harnessId, status: 'blocked', blockingFindings: blocking });
++        continue;
++      }
++      // Spec §8: re-running enable refreshes the wiring. Doctor's drift rule
++      // covers already-configured harnesses, so repair the symlinks idempotently
++      // when it reports drift (a blocking guard above keeps foreign files safe).
++      const drifted = harnessFindings.some((f) => f.ruleId === 'generated-file-drift' && f.severity === 'warning');
++      if (drifted) {
++        wireMigrateSymlinkHarness(repoRoot, entry);
++      }
+       results.push({ harnessId, status: 'already-enabled', blockingFindings: [] });
+       continue;
+     }
+ 
+     const harnessFindings = allFindings.filter((f) => f.harnessId === harnessId);
+     const blocking = harnessFindings.filter((f) => f.severity === 'error' && (!f.forceable || !options.force));
+ 
+     if (blocking.length > 0) {
+       results.push({ harnessId, status: 'blocked', blockingFindings: blocking });
+       continue;
+diff --git a/src/commands/migrate.test.ts b/src/commands/migrate.test.ts
+index b668a52..0ec099e 100644
+--- a/src/commands/migrate.test.ts
++++ b/src/commands/migrate.test.ts
+@@ -21,35 +21,66 @@ describe('migrateHarness', () => {
+   });
+ 
+   it('reports nothing to migrate when .claude/skills is empty or absent', () => {
+     const result = migrateHarness(repoRoot, 'claude-code');
+     expect(result.exitCode).toBe(0);
+     expect(result.output).toContain('nothing to migrate');
+   });
+ 
+   it('copies a new skill into canon without touching .claude/skills', () => {
+     mkdirSync(join(repoRoot, '.claude', 'skills', 'a'), { recursive: true });
+-    writeFileSync(join(repoRoot, '.claude', 'skills', 'a', 'SKILL.md'), 'body');
++    writeFileSync(join(repoRoot, '.claude', 'skills', 'a', 'SKILL.md'), '---\nname: a\ndescription: x\n---\nbody');
+     const result = migrateHarness(repoRoot, 'claude-code');
+     expect(result.exitCode).toBe(0);
+-    expect(readFileSync(join(repoRoot, '.agents', 'skills', 'a', 'SKILL.md'), 'utf8')).toBe('body');
++    expect(readFileSync(join(repoRoot, '.agents', 'skills', 'a', 'SKILL.md'), 'utf8')).toBe('---\nname: a\ndescription: x\n---\nbody');
+     expect(existsSync(join(repoRoot, '.claude', 'skills', 'a', 'SKILL.md'))).toBe(true);
+   });
+ 
+   it('errors on a collision without copying anything', () => {
+     mkdirSync(join(repoRoot, '.claude', 'skills', 'a'), { recursive: true });
+     mkdirSync(join(repoRoot, '.agents', 'skills', 'a'), { recursive: true });
+     writeFileSync(join(repoRoot, '.claude', 'skills', 'a', 'SKILL.md'), 'one');
+     writeFileSync(join(repoRoot, '.agents', 'skills', 'a', 'SKILL.md'), 'two');
+     const result = migrateHarness(repoRoot, 'claude-code');
+     expect(result.exitCode).toBe(1);
+     expect(readFileSync(join(repoRoot, '.agents', 'skills', 'a', 'SKILL.md'), 'utf8')).toBe('two');
+   });
+ 
+   it('is a no-op the second time it runs', () => {
+     mkdirSync(join(repoRoot, '.claude', 'skills', 'a'), { recursive: true });
+-    writeFileSync(join(repoRoot, '.claude', 'skills', 'a', 'SKILL.md'), 'body');
++    writeFileSync(join(repoRoot, '.claude', 'skills', 'a', 'SKILL.md'), '---\nname: a\ndescription: x\n---\nbody');
+     migrateHarness(repoRoot, 'claude-code');
+     const second = migrateHarness(repoRoot, 'claude-code');
+     expect(second.output).toContain('nothing to migrate');
+   });
++
++  it('refuses to adopt an entry without a SKILL.md (clobber-risk)', () => {
++    mkdirSync(join(repoRoot, '.claude', 'skills', 'bad'), { recursive: true });
++    writeFileSync(join(repoRoot, '.claude', 'skills', 'bad', 'notaskill.md'), 'junk');
++    const result = migrateHarness(repoRoot, 'claude-code');
++    expect(result.exitCode).toBe(1);
++    expect(result.output).toContain('clobber-risk');
++    expect(result.output).toContain('bad');
++    expect(existsSync(join(repoRoot, '.agents', 'skills', 'bad'))).toBe(false);
++  });
++
++  it('refuses to adopt an entry with invalid frontmatter (clobber-risk)', () => {
++    mkdirSync(join(repoRoot, '.claude', 'skills', 'badname'), { recursive: true });
++    writeFileSync(join(repoRoot, '.claude', 'skills', 'badname', 'SKILL.md'), '---\nname: Bad_Name\ndescription: x\n---\nbody');
++    const result = migrateHarness(repoRoot, 'claude-code');
++    expect(result.exitCode).toBe(1);
++    expect(result.output).toContain('clobber-risk');
++    expect(existsSync(join(repoRoot, '.agents', 'skills', 'badname'))).toBe(false);
++  });
++
++  it('still adopts valid skills atomically after rejecting an invalid one', () => {
++    mkdirSync(join(repoRoot, '.claude', 'skills', 'good'), { recursive: true });
++    writeFileSync(join(repoRoot, '.claude', 'skills', 'good', 'SKILL.md'), '---\nname: good\ndescription: fine\n---\nbody');
++    mkdirSync(join(repoRoot, '.claude', 'skills', 'bad'), { recursive: true });
++    writeFileSync(join(repoRoot, '.claude', 'skills', 'bad', 'notaskill.md'), 'junk');
++    const result = migrateHarness(repoRoot, 'claude-code');
++    expect(result.exitCode).toBe(1);
++    expect(result.output).toContain('bad');
++    expect(existsSync(join(repoRoot, '.agents', 'skills', 'good'))).toBe(false);
++    expect(existsSync(join(repoRoot, '.agents', 'skills', 'bad'))).toBe(false);
++  });
+ });
+diff --git a/src/commands/migrate.ts b/src/commands/migrate.ts
+index 18c39a0..ab4c2aa 100644
+--- a/src/commands/migrate.ts
++++ b/src/commands/migrate.ts
+@@ -1,21 +1,43 @@
+ // src/commands/migrate.ts
++import { existsSync, readFileSync, statSync } from 'node:fs';
++import { join } from 'node:path';
++import matter from 'gray-matter';
+ import { copyDirRecursive } from '../fsutil';
+ import { planSkillMigration } from '../skills/skillMigrationPlan';
++import { validateSkillFrontmatter } from '../skills/validate';
+ import { getHarnessEntry } from '../registry';
+ import type { HarnessId } from '../harnesses';
+ 
+ export interface MigrateCommandResult {
+   output: string;
+   exitCode: number;
+ }
+ 
++/**
++ * Reads the frontmatter of a harness-side SKILL.md, mirroring canon's
++ * readSkillFrontmatter semantics: malformed YAML degrades to
++ * `frontmatter: undefined` and never throws.
++ */
++function readHarnessSkillFrontmatter(skillMdPath: string): { hasSkillMd: boolean; frontmatter?: Record<string, unknown> } {
++  if (!existsSync(skillMdPath) || !statSync(skillMdPath).isFile()) {
++    return { hasSkillMd: false };
++  }
++  try {
++    const raw = readFileSync(skillMdPath, 'utf8');
++    const parsed = matter(raw);
++    return { hasSkillMd: true, frontmatter: parsed.data };
++  } catch {
++    return { hasSkillMd: true, frontmatter: undefined };
++  }
++}
++
+ export function migrateHarness(repoRoot: string, harnessId: HarnessId): MigrateCommandResult {
+   const entry = getHarnessEntry(harnessId);
+   if (entry.skills.mode !== 'migrate-symlink') {
+     return {
+       output: `harness-hub migrate: nothing to do for "${harnessId}" — it reads canon natively with no pre-existing content to adopt in this deliverable.`,
+       exitCode: 1,
+     };
+   }
+ 
+   const plan = planSkillMigration(repoRoot, entry);
+@@ -29,19 +51,36 @@ export function migrateHarness(repoRoot: string, harnessId: HarnessId): MigrateC
+       output: `harness-hub migrate: skill migration collision(s), fix by hand and re-run:\n${lines.join('\n')}`,
+       exitCode: 1,
+     };
+   }
+ 
+   const toCopy = plan.filter((e) => e.classification === 'new');
+   if (toCopy.length === 0) {
+     return { output: 'harness-hub migrate: nothing to migrate.', exitCode: 0 };
+   }
+ 
++  // Spec §6: validate every entry against the skill-shape/frontmatter contract
++  // BEFORE adopting it — anything that fails is a clobber-risk error, because
++  // adopting junk would poison every future enable with canon-wide errors.
++  const invalid = toCopy.filter((e) => {
++    const { hasSkillMd, frontmatter } = readHarnessSkillFrontmatter(join(e.harnessSkillPath, 'SKILL.md'));
++    return !hasSkillMd || validateSkillFrontmatter(e.name, frontmatter).length > 0;
++  });
++  if (invalid.length > 0) {
++    const lines = invalid.map(
++      (e) => `  ${entry.skills.symlinkPath}/${e.name}/ fails the skill contract (missing or invalid SKILL.md frontmatter)`
++    );
++    return {
++      output: `harness-hub migrate: clobber-risk — refusing to adopt invalid skill(s), fix by hand and re-run:\n${lines.join('\n')}`,
++      exitCode: 1,
++    };
++  }
++
+   for (const planEntry of toCopy) {
+     copyDirRecursive(planEntry.harnessSkillPath, planEntry.canonSkillPath);
+   }
+ 
+   return {
+     output: `harness-hub migrate: adopted ${toCopy.length} skill(s) into canon: ${toCopy.map((e) => e.name).join(', ')}`,
+     exitCode: 0,
+   };
+ }
