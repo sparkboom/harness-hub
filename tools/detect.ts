@@ -15,7 +15,9 @@ export interface DetectRow {
 // Cursor is the headless `agent` CLI, NOT the `cursor` IDE (spec R3).
 const BINARY_CANDIDATES: Record<string, string[]> = {
   'claude-code': ['claude'],
-  cursor: ['agent', join(homedir(), '.cursor', 'bin', 'agent')],
+  // The standalone cursor-agent CLI installs itself at ~/.local/bin/agent,
+  // which is frequently not on non-interactive PATHs.
+  cursor: ['agent', join(homedir(), '.cursor', 'bin', 'agent'), join(homedir(), '.local', 'bin', 'agent')],
   opencode: ['opencode'],
   codex: ['codex'],
   hermes: ['hermes'],
