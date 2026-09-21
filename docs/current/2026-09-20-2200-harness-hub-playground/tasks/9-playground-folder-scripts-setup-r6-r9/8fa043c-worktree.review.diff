@@ -1,0 +1,45 @@
+# Task 9 review package (no commit — playground is git-ignored per R7)
+
+## Base..Head: 8fa043c..8fa043c (no commit created — Task 9 Step 5 conclusion)
+
+## New files on disk (untracked, git-ignored)
+
+--- NEW FILE: playground/package.json
+{
+  "name": "harness-hub-playground",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "setup": "sh setup.sh",
+    "generate": "node ../tools/generate.mjs",
+    "scenario": "node ../tools/generate.mjs",
+    "detect": "node ../tools/detect.mjs",
+    "probe": "node ../tools/probe.mjs",
+    "reset": "git clean -fdX .",
+    "shell": "nix develop"
+  }
+}
+
+--- NEW FILE: playground/setup.sh
+#!/bin/sh
+set -eu
+
+# 1. Nested git — the playground must be its own consumer repo (spec: findRepoRoot).
+if [ ! -d .git ]; then
+  git init >/dev/null
+  echo "playground: initialized nested git repo"
+fi
+
+# 2. Link the harness-hub CLI.
+if ! command -v harness-hub >/dev/null 2>&1; then
+  (cd .. && npm link) >/dev/null
+fi
+echo "playground: harness-hub CLI available at: $(command -v harness-hub)"
+
+# 3. R9 — refuse harness observation outside the pinned shell.
+if [ -z "${IN_NIX_SHELL:-}" ]; then
+  echo "playground: WARNING — not in \`nix develop\`. Harness-observing commands"
+  echo "  (probe, enable, doctor) may see unpinned harnesses. Run: npm run shell"
+fi
+
+echo "playground: ready. Try \`npm run generate -- baseline\`, then \`harness-hub doctor\`."

@@ -1,0 +1,185 @@
+# Review package: 5ad3071..38de0df
+
+## Commits
+38de0df feat: add tools scaffold with asset primitives
+
+## Files changed
+ package.json             |  3 ++-
+ tools/fs.ts              | 23 +++++++++++++++++++++++
+ tools/primitives.test.ts | 34 ++++++++++++++++++++++++++++++++++
+ tools/primitives.ts      | 30 ++++++++++++++++++++++++++++++
+ tools/tsconfig.json      | 17 +++++++++++++++++
+ vitest.config.ts         |  2 +-
+ 6 files changed, 107 insertions(+), 2 deletions(-)
+
+## Diff
+diff --git a/package.json b/package.json
+index 3fd530d..da36b88 100644
+--- a/package.json
++++ b/package.json
+@@ -7,21 +7,22 @@
+     "harness-hub": "dist/bin.js"
+   },
+   "engines": {
+     "node": ">=22.12.0"
+   },
+   "files": ["dist", "harness-versions.json"],
+   "scripts": {
+     "build": "tsc -p tsconfig.json",
+     "test": "vitest run",
+     "test:watch": "vitest",
+-    "typecheck": "tsc -p tsconfig.json --noEmit"
++    "typecheck": "tsc -p tsconfig.json --noEmit",
++    "build:tools": "tsc -p tools/tsconfig.json"
+   },
+   "dependencies": {
+     "commander": "^15.0.0",
+     "gray-matter": "^4.0.3",
+     "yaml": "^2.9.1"
+   },
+   "devDependencies": {
+     "@types/node": "^22.0.0",
+     "typescript": "^7.0.2",
+     "vitest": "^5.0.1"
+diff --git a/tools/fs.ts b/tools/fs.ts
+new file mode 100644
+index 0000000..996cf56
+--- /dev/null
++++ b/tools/fs.ts
+@@ -0,0 +1,23 @@
++import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
++import { dirname, join } from 'node:path';
++import type { Asset } from './primitives';
++
++export function writeAssets(target: string, assets: Asset[]): void {
++  for (const a of assets) {
++    const full = join(target, a.path);
++    mkdirSync(dirname(full), { recursive: true });
++    writeFileSync(full, a.content, 'utf8');
++  }
++}
++
++/** Removes everything under `target` except `.git`, preserving a consumer repo's nested git. */
++export function resetTarget(target: string): void {
++  if (!existsSync(target)) {
++    mkdirSync(target, { recursive: true });
++    return;
++  }
++  for (const entry of readdirSync(target, { withFileTypes: true })) {
++    if (entry.name === '.git') continue;
++    rmSync(join(target, entry.name), { recursive: true, force: true });
++  }
++}
+diff --git a/tools/primitives.test.ts b/tools/primitives.test.ts
+new file mode 100644
+index 0000000..651c894
+--- /dev/null
++++ b/tools/primitives.test.ts
+@@ -0,0 +1,34 @@
++import { describe, it, expect, beforeEach, afterEach } from 'vitest';
++import { mkdtempSync, rmSync, existsSync, readFileSync, readdirSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import { agentDoc, skill, raw, writeAssets, resetTarget } from './primitives';
++
++describe('primitives', () => {
++  let target: string;
++  beforeEach(() => { target = mkdtempSync(join(tmpdir(), 'hh-tools-')); });
++  afterEach(() => { rmSync(target, { recursive: true, force: true }); });
++
++  it('agentDoc returns a root-level asset', () => {
++    expect(agentDoc('AGENTS.md', '# Agents\n')).toEqual({ path: 'AGENTS.md', content: '# Agents\n' });
++  });
++
++  it('skill serializes frontmatter and body at <location>/<name>/SKILL.md', () => {
++    const asset = skill({ name: 'writing-tests', location: '.agents/skills', frontmatter: { name: 'writing-tests', description: 'Write tests.' }, body: 'Body\n' });
++    expect(asset.path).toBe('.agents/skills/writing-tests/SKILL.md');
++    expect(asset.content).toContain('name: writing-tests');
++    expect(asset.content).toContain('Body');
++  });
++
++  it('writeAssets writes files and creates parent dirs', () => {
++    writeAssets(target, [raw('a/b/c.md', 'x')]);
++    expect(readFileSync(join(target, 'a', 'b', 'c.md'), 'utf8')).toBe('x');
++  });
++
++  it('resetTarget clears everything except .git', () => {
++    writeAssets(target, [raw('keep.md', 'x'), raw('.git/HEAD', 'ref: refs/heads/main')]);
++    resetTarget(target);
++    expect(existsSync(join(target, 'keep.md'))).toBe(false);
++    expect(existsSync(join(target, '.git', 'HEAD'))).toBe(true);
++  });
++});
+diff --git a/tools/primitives.ts b/tools/primitives.ts
+new file mode 100644
+index 0000000..5525744
+--- /dev/null
++++ b/tools/primitives.ts
+@@ -0,0 +1,30 @@
++import { stringify } from 'yaml';
++import { join } from 'node:path';
++
++export interface Asset {
++  path: string;
++  content: string;
++}
++
++export function agentDoc(path: string, content: string): Asset {
++  return { path, content };
++}
++
++export function skill(opts: {
++  name: string;
++  location: string;
++  frontmatter: Record<string, unknown>;
++  body?: string;
++}): Asset {
++  const fm = Object.keys(opts.frontmatter).length > 0
++    ? `---\n${stringify(opts.frontmatter)}---\n`
++    : '';
++  const body = opts.body ?? `Placeholder body for skill "${opts.name}".\n`;
++  return { path: join(opts.location, opts.name, 'SKILL.md'), content: fm + body };
++}
++
++export function raw(path: string, content: string): Asset {
++  return { path, content };
++}
++
++export { writeAssets, resetTarget } from './fs';
+diff --git a/tools/tsconfig.json b/tools/tsconfig.json
+new file mode 100644
+index 0000000..af17249
+--- /dev/null
++++ b/tools/tsconfig.json
+@@ -0,0 +1,17 @@
++{
++  "compilerOptions": {
++    "target": "ES2022",
++    "module": "CommonJS",
++    "lib": ["ES2022"],
++    "outDir": "dist",
++    "rootDir": ".",
++    "strict": true,
++    "types": ["node"],
++    "esModuleInterop": true,
++    "skipLibCheck": true,
++    "declaration": false,
++    "sourceMap": false
++  },
++  "include": ["**/*.ts"],
++  "exclude": ["**/*.test.ts", "dist", "node_modules"]
++}
+diff --git a/vitest.config.ts b/vitest.config.ts
+index 96eb6ab..05cda7d 100644
+--- a/vitest.config.ts
++++ b/vitest.config.ts
+@@ -1,8 +1,8 @@
+ import { defineConfig } from 'vitest/config';
+ 
+ export default defineConfig({
+   test: {
+-    include: ['src/**/*.test.ts'],
++    include: ['src/**/*.test.ts', 'tools/**/*.test.ts'],
+     environment: 'node',
+   },
+ });

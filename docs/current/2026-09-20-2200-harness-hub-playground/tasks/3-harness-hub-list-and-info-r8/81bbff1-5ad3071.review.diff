@@ -1,0 +1,59 @@
+# Review package: 81bbff1..5ad3071
+
+## Commits
+5ad3071 fix: sort harness-hub list output by harness id
+
+## Files changed
+ src/commands/list.test.ts | 6 ++++--
+ src/commands/list.ts      | 2 +-
+ 2 files changed, 5 insertions(+), 3 deletions(-)
+
+## Diff
+diff --git a/src/commands/list.test.ts b/src/commands/list.test.ts
+index d8aa3af..6af8efe 100644
+--- a/src/commands/list.test.ts
++++ b/src/commands/list.test.ts
+@@ -8,14 +8,16 @@ describe('formatList', () => {
+     for (const id of ALL_HARNESS_IDS) expect(out).toContain(id);
+   });
+ 
+   it('shows each harness version', () => {
+     const out = formatList();
+     expect(out).toContain('2.1.272'); // claude-code
+     expect(out).toContain('1.18.31'); // opencode
+   });
+ 
+   it('is sorted by harness id', () => {
+-    const ids = ALL_HARNESS_IDS.map((id) => formatList().indexOf(id));
+-    expect([...ids].sort((a, b) => a - b)).toEqual(ids);
++    const out = formatList();
++    const expected = [...ALL_HARNESS_IDS].sort();
++    const positions = expected.map((id) => out.indexOf(id));
++    expect([...positions].sort((a, b) => a - b)).toEqual(positions);
+   });
+ });
+diff --git a/src/commands/list.ts b/src/commands/list.ts
+index 88afb7a..13abca6 100644
+--- a/src/commands/list.ts
++++ b/src/commands/list.ts
+@@ -1,19 +1,19 @@
+ import { ALL_HARNESS_IDS } from '../harnesses';
+ import { getHarnessEntry } from '../registry';
+ 
+ function pad(value: string, width: number): string {
+   return value.length >= width ? value : value + ' '.repeat(width - value.length);
+ }
+ 
+ export function formatList(): string {
+-  const rows = [...ALL_HARNESS_IDS].map((id) => {
++  const rows = [...ALL_HARNESS_IDS].sort().map((id) => {
+     const e = getHarnessEntry(id);
+     const skills = e.skills.mode === 'migrate-symlink' ? 'migrate-symlink' : e.skills.mode;
+     return [
+       pad(e.id, 12),
+       pad(e.displayName, 18),
+       pad(e.verifiedVersion, 12),
+       pad(e.agentsDoc.mode, 12),
+       skills,
+     ].join(' ');
+   });
