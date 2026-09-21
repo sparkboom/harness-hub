@@ -58,7 +58,7 @@ export function probeHarness(
 export function warnIfUnpinned(stderr: (msg: string) => void = console.error): void {
   if (!process.env.IN_NIX_SHELL) {
     stderr(
-      'probe: WARNING — not running inside `nix develop`. Observing the unpinned host environment (R9). Run `npm run shell` for pinned harnesses.'
+      'probe: WARNING — not running inside `nix develop`. Observing the unpinned host environment (R9). Run `env shell` (or an env\'s `npm run shell`) for pinned harnesses.'
     );
   }
 }
