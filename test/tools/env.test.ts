@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   isValidName, resolveEnvPath, resolveTestDir, renderTemplate,
-  createEnv, rmEnv, listEnvs, generateIntoEnv,
+  createEnv, rmEnv, listEnvs, generateIntoEnv, parseArgs,
 } from './env';
 
 const TPL_PKG = JSON.stringify({
@@ -76,5 +76,34 @@ describe('env manager', () => {
     generateIntoEnv(root, 'foo', 'baseline');
     expect(existsSync(join(root, 'env', 'foo', 'AGENTS.md'))).toBe(true);
     expect(existsSync(join(root, 'env', 'foo', '.agents', 'skills', 'writing-tests', 'SKILL.md'))).toBe(true);
+  });
+
+  it('parses create with default and explicit names', () => {
+    expect(parseArgs(['create'])).toEqual({ kind: 'create', name: 'playground' });
+    expect(parseArgs(['create', 'foo'])).toEqual({ kind: 'create', name: 'foo' });
+  });
+
+  it('parses rm with --yes', () => {
+    expect(parseArgs(['rm', 'foo', '--yes'])).toEqual({ kind: 'rm', name: 'foo', yes: true });
+    expect(parseArgs(['rm', 'foo'])).toEqual({ kind: 'rm', name: 'foo', yes: false });
+  });
+
+  it('parses ls', () => {
+    expect(parseArgs(['ls'])).toEqual({ kind: 'ls' });
+  });
+
+  it('parses shell with optional name', () => {
+    expect(parseArgs(['shell'])).toEqual({ kind: 'shell' });
+    expect(parseArgs(['shell', 'foo'])).toEqual({ kind: 'shell', name: 'foo' });
+  });
+
+  it('parses generate with optional target', () => {
+    expect(parseArgs(['generate', 'foo', 'baseline'])).toEqual({ kind: 'generate', name: 'foo', scenario: 'baseline' });
+    expect(parseArgs(['generate', 'foo', 'baseline', '--target', '/tmp/x']))
+      .toEqual({ kind: 'generate', name: 'foo', scenario: 'baseline', target: '/tmp/x' });
+  });
+
+  it('rejects an unknown command', () => {
+    expect(() => parseArgs(['frobnicate'])).toThrow(/Unknown command/);
   });
 });

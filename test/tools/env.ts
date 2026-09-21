@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, readSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { generateScenario } from './generate';
 
@@ -129,5 +129,126 @@ export function generateIntoEnv(root: string, name: string, scenario: string): v
 export function warnIfUnpinned(stderr: (msg: string) => void = console.error): void {
   if (!process.env.IN_NIX_SHELL) {
     stderr('env: WARNING — not running inside `nix develop`. Run `env shell` for pinned harnesses.');
+  }
+}
+
+// ---- CLI ----
+const USAGE = `usage: env <command> [args] [--root <test-dir>]
+  env create [name]                 construct an env (default "playground"; alias: init)
+  env rm <name> [--yes]             remove an env
+  env ls                            list envs
+  env shell [name]                  enter nix develop against test/flake.nix
+  env generate <name> <scenario> [--target <dir>]
+                                    generate a scenario into an env
+`;
+
+export type EnvCommand =
+  | { kind: 'create'; name: string }
+  | { kind: 'rm'; name: string; yes: boolean }
+  | { kind: 'ls' }
+  | { kind: 'shell'; name?: string }
+  | { kind: 'generate'; name: string; scenario: string; target?: string };
+
+export function parseArgs(argv: string[]): EnvCommand {
+  const [cmd, ...rest] = argv;
+  switch (cmd) {
+    case 'create':
+    case 'init':
+      return { kind: 'create', name: rest[0] ?? DEFAULT_ENV_NAME };
+    case 'rm': {
+      if (!rest[0]) throw new Error('Usage: env rm <name> [--yes]');
+      return { kind: 'rm', name: rest[0], yes: rest.includes('--yes') };
+    }
+    case 'ls':
+      return { kind: 'ls' };
+    case 'shell':
+      return { kind: 'shell', name: rest[0] };
+    case 'generate': {
+      const [name, scenario, ...opts] = rest;
+      if (!name || !scenario) throw new Error('Usage: env generate <name> <scenario> [--target <dir>]');
+      let target: string | undefined;
+      for (let i = 0; i < opts.length; i++) {
+        if (opts[i] === '--target') target = opts[++i];
+        else if (opts[i].startsWith('--target=')) target = opts[i].slice('--target='.length);
+      }
+      return target ? { kind: 'generate', name, scenario, target } : { kind: 'generate', name, scenario };
+    }
+    default:
+      throw new Error(`Unknown command "${cmd}". ${USAGE}`);
+  }
+}
+
+function extractRoot(argv: string[]): { root?: string; rest: string[] } {
+  const rest: string[] = [];
+  let root: string | undefined;
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--root') { root = argv[++i]; }
+    else if (argv[i].startsWith('--root=')) { root = argv[i].slice('--root='.length); }
+    else { rest.push(argv[i]); }
+  }
+  return { root, rest };
+}
+
+export function runShell(root: string, name?: string): number {
+  let cwd = dirname(root); // repo root
+  if (name) {
+    const envPath = resolveEnvPath(root, name);
+    if (!existsSync(envPath)) {
+      throw new Error(`Unknown env "${name}" — run \`env create ${name}\` first.`);
+    }
+    cwd = envPath;
+  }
+  const r = spawnSync('nix', ['develop', '--flake', root], { cwd, stdio: 'inherit' });
+  return r.status ?? 1;
+}
+
+function confirmRemove(name: string): boolean {
+  process.stdout.write(`Remove env "${name}" (test/env/${name}/) permanently? [y/N] `);
+  const buf = Buffer.alloc(16);
+  let n = 0;
+  try {
+    n = readSync(0, buf, 0, 16, null);
+  } catch {
+    return false;
+  }
+  const answer = buf.toString('utf8', 0, n).trim().toLowerCase();
+  return answer === 'y' || answer === 'yes';
+}
+
+export async function main(argv: string[], defaultRoot?: string): Promise<number> {
+  const { root: rootOverride, rest } = extractRoot(argv);
+  const root = defaultRoot ?? rootOverride ?? resolveTestDir(__dirname);
+  try {
+    const cmd = parseArgs(rest);
+    switch (cmd.kind) {
+      case 'create': {
+        warnIfUnpinned();
+        const envPath = createEnv(root, cmd.name);
+        console.log(`env: created ${cmd.name} at ${envPath}`);
+        return 0;
+      }
+      case 'rm': {
+        if (!cmd.yes && !confirmRemove(cmd.name)) return 1;
+        rmEnv(root, cmd.name);
+        console.log(`env: removed ${cmd.name}`);
+        return 0;
+      }
+      case 'ls': {
+        for (const name of listEnvs(root)) console.log(name);
+        return 0;
+      }
+      case 'shell':
+        return runShell(root, cmd.name);
+      case 'generate': {
+        warnIfUnpinned();
+        const dest = cmd.target ?? resolveEnvPath(root, cmd.name);
+        generateScenario(dest, cmd.scenario);
+        console.log(`env: generated "${cmd.scenario}" into ${dest}`);
+        return 0;
+      }
+    }
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    return 1;
   }
 }
