@@ -1,5 +1,5 @@
 {
-  description = "harness-hub playground dev shell";
+  description = "harness-hub test environment shell";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
@@ -9,7 +9,7 @@
       pkgs = import nixpkgs { inherit system; };
       # harness-versions.json (repo root) is the single source of truth for
       # pinned harness versions — see spec R10.
-      versions = builtins.fromJSON (builtins.readFile ./harness-versions.json);
+      versions = builtins.fromJSON (builtins.readFile ../harness-versions.json);
 
       # Build an npm-distributed harness at its pinned version.
       # FIRST CUT: hashes are placeholders — filled by the one-run build loop
@@ -57,7 +57,7 @@
           (mkNpmHarness "@deepseek-ai/dsh" versions.deepseek.version)
         ] ++ cursorFhs;
         shellHook = ''
-          echo "harness-hub playground shell — run \`detect\` to see the pinned harnesses."
+          echo "harness-hub test shell — run \`detect\` to see the pinned harnesses."
           if command -v agent >/dev/null 2>&1; then
             echo "cursor agent: $(command -v agent)"
           else
