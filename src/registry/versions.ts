@@ -15,15 +15,20 @@ export interface HarnessVersionEntry {
   install: HarnessInstallManifest;
 }
 
-// Compiled to dist/registry/versions.js, so __dirname is dist/registry and the
-// manifest is two levels up at the repo root (and ships in the npm package via
-// the "files" array).
-const MANIFEST_PATH = join(__dirname, '..', '..', 'harness-versions.json');
+// Compiled to dist/registry/versions.js (__dirname = dist/registry) and run
+// from src/registry under vitest; both are two levels below the repo root,
+// where config/config.json ships (via the "files" array).
+const MANIFEST_PATH = join(__dirname, '..', '..', 'config', 'config.json');
+
+interface ManifestShape {
+  harness: { versions: Record<string, HarnessVersionEntry> };
+}
 
 export function loadVersionsManifest(): Record<HarnessId, HarnessVersionEntry> {
-  const raw = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8')) as Record<string, HarnessVersionEntry>;
+  const raw = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8')) as ManifestShape;
+  const versions = raw.harness.versions;
   for (const id of ALL_HARNESS_IDS) {
-    if (!(id in raw)) throw new Error(`harness-versions.json is missing an entry for "${id}"`);
+    if (!(id in versions)) throw new Error(`config/config.json is missing an entry for "${id}"`);
   }
-  return raw as Record<HarnessId, HarnessVersionEntry>;
+  return versions as Record<HarnessId, HarnessVersionEntry>;
 }

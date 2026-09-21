@@ -7,9 +7,10 @@
     let
       system = "aarch64-darwin";
       pkgs = import nixpkgs { inherit system; };
-      # harness-versions.json (repo root) is the single source of truth for
-      # pinned harness versions — see spec R10.
-      versions = builtins.fromJSON (builtins.readFile ../harness-versions.json);
+      # config/config.json (repo root) is the single source of truth for
+      # pinned harness versions — nested under `harness.versions`.
+      cfg = builtins.fromJSON (builtins.readFile ../config/config.json);
+      versions = cfg.harness.versions;
 
       # Build an npm-distributed harness at its pinned version.
       # FIRST CUT: hashes are placeholders — filled by the one-run build loop
