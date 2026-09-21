@@ -31,13 +31,19 @@
 
       # Cursor headless `agent` CLI via a Community FHS wrapper (spec R5/R9 —
       # provisional; if this proves unreliable, cursor is detection-only).
-      cursorFhs = pkgs.buildFHSUserEnv {
-        name = "cursor-agent-fhs";
-        targetPkgs = _: with pkgs; [ curl cacert bash ];
-        runScript = ''
-          curl -fsSL https://cursor.com/install | bash
-        '';
-      };
+      # Linux-only: buildFHSUserEnv does not build on darwin, so on macOS the
+      # cursor agent stays detection-only (shellHook reports NOT INSTALLED),
+      # while on Linux the FHS-wrapped `agent` lands on PATH inside the shell.
+      isLinux = pkgs.stdenv.isLinux;
+      cursorFhs = pkgs.lib.optionals isLinux [
+        (pkgs.buildFHSUserEnv {
+          name = "cursor-agent-fhs";
+          targetPkgs = _: with pkgs; [ curl cacert bash ];
+          runScript = ''
+            curl -fsSL https://cursor.com/install | bash
+          '';
+        })
+      ];
     in
     {
       devShells.${system}.default = pkgs.mkShell {
@@ -49,7 +55,7 @@
           (mkNpmHarness "hermes-agent" versions.hermes.version)
           (mkNpmHarness "@mariozechner/pi-coding-agent" versions.pi.version)
           (mkNpmHarness "@deepseek-ai/dsh" versions.deepseek.version)
-        ];
+        ] ++ cursorFhs;
         shellHook = ''
           echo "harness-hub playground shell — run \`detect\` to see the pinned harnesses."
           if command -v agent >/dev/null 2>&1; then

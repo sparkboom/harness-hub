@@ -20,4 +20,15 @@ describe('formatList', () => {
     const positions = expected.map((id) => out.indexOf(id));
     expect([...positions].sort((a, b) => a - b)).toEqual(positions);
   });
+
+  it('shows the trust-gate command for hermes and a dash for others', () => {
+    const out = formatList();
+    expect(out).toContain('hermes skills trust');
+    // The header must carry the column and non-gated rows show '-'.
+    expect(out).toContain('TRUST GATE');
+    const hermesLine = out.split('\n').find((line) => line.trimStart().startsWith('hermes'));
+    expect(hermesLine).toContain('hermes skills trust');
+    const cursorLine = out.split('\n').find((line) => line.trimStart().startsWith('cursor'));
+    expect(cursorLine).toContain('-');
+  });
 });
