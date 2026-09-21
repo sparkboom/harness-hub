@@ -2,4 +2,4 @@
 dist/
 node_modules/
 playground/
-tools/dist/
+test/tools/dist/

@@ -17,6 +17,7 @@ const MANIFEST_CANDIDATES = [
   join(__dirname, 'harness-versions.json'),
   join(__dirname, '..', 'harness-versions.json'),
   join(__dirname, '..', '..', 'harness-versions.json'),
+  join(__dirname, '..', '..', '..', 'harness-versions.json'),
 ];
 
 const MANIFEST_PATH =
