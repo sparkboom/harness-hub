@@ -55,3 +55,4 @@ Final review: Ruling: flake cursorFhs becomes Linux-conditional (buildFHSUserEnv
 Final review: fix wave (1 commit, 29eb3f3): probe binary threading + exit-status propagation, list TRUST GATE column (+test, TDD), probe R9 warnIfUnpinned banner, flake cursorFhs Linux-conditional spliced into buildInputs. 33 files/164 tests green; typecheck, build:tools, nix parse OK.
 Final review re-review: all 4 findings ADDRESSED, no new breakage — branch record: a5e1710..29eb3f3.
 Artifacts promoted into this folder per AGENTS.md (ledger, tasks/{n}-{slug}/ briefs+reports+review diffs); scratch workspace removed.
+Task 10 (unplanned final-fix): artifacts promoted from transcripts + git (brief = fix-wave dispatch 2026-09-21-0247, report = 2026-09-21-0252, diffs 8fa043c-29eb3f3.review.diff (fix wave) + a5e1710-8fa043c.review.diff (whole-branch review)) — recovered post-cleanup; scratch report was not promoted before scratch removal.

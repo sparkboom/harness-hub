@@ -1,0 +1,1804 @@
+diff --git a/.gitignore b/.gitignore
+index 13286e1..02012dc 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1,3 +1,5 @@
+ .cursor
+ dist/
+ node_modules/
++playground/
++tools/dist/
+diff --git a/flake.lock b/flake.lock
+new file mode 100644
+index 0000000..d9c0837
+--- /dev/null
++++ b/flake.lock
+@@ -0,0 +1,27 @@
++{
++  "nodes": {
++    "nixpkgs": {
++      "locked": {
++        "lastModified": 1789785513,
++        "narHash": "sha256-B44WL6h0XoLjJ41bUPJk0X5SDinLCII//6EcBLXKiJ0=",
++        "owner": "NixOS",
++        "repo": "nixpkgs",
++        "rev": "20b1ddd1aa5ace70c9468305030aa4f9ef79671b",
++        "type": "github"
++      },
++      "original": {
++        "owner": "NixOS",
++        "ref": "nixos-unstable",
++        "repo": "nixpkgs",
++        "type": "github"
++      }
++    },
++    "root": {
++      "inputs": {
++        "nixpkgs": "nixpkgs"
++      }
++    }
++  },
++  "root": "root",
++  "version": 7
++}
+diff --git a/flake.nix b/flake.nix
+new file mode 100644
+index 0000000..6a631ec
+--- /dev/null
++++ b/flake.nix
+@@ -0,0 +1,70 @@
++{
++  description = "harness-hub playground dev shell";
++
++  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
++
++  outputs = { self, nixpkgs }:
++    let
++      system = "aarch64-darwin";
++      pkgs = import nixpkgs { inherit system; };
++      # harness-versions.json (repo root) is the single source of truth for
++      # pinned harness versions — see spec R10.
++      versions = builtins.fromJSON (builtins.readFile ./harness-versions.json);
++
++      # Build an npm-distributed harness at its pinned version.
++      # FIRST CUT: hashes are placeholders — filled by the one-run build loop
++      # (see HASH FILL below). Some packages may ship prebuilt binaries that
++      # buildNpmPackage mis-handles; if so, swap that call for a runCommand
++      # that fetches the platform binary into $out/bin.
++      mkNpmHarness = pname: version: pkgs.buildNpmPackage {
++        inherit pname version;
++        src = pkgs.fetchurl {
++          url = "https://registry.npmjs.org/${pname}/-/${builtins.baseNameOf pname}-${version}.tgz";
++          # lib.fakeHash (sha256-AAAA…) not fakeSha256: Nix >= 2.19 rejects the
++          # bare-zeros hash at eval; fakeHash triggers the hash-mismatch error
++          # that prints the real hash for the fill loop below.
++          sha256 = pkgs.lib.fakeHash; # filled by `nix develop` first run (see Step 2)
++        };
++        npmDepsHash = pkgs.lib.fakeHash; # filled the same way
++        dontNpmBuild = true;
++      };
++
++      # Cursor headless `agent` CLI via a Community FHS wrapper (spec R5/R9 —
++      # provisional; if this proves unreliable, cursor is detection-only).
++      cursorFhs = pkgs.buildFHSUserEnv {
++        name = "cursor-agent-fhs";
++        targetPkgs = _: with pkgs; [ curl cacert bash ];
++        runScript = ''
++          curl -fsSL https://cursor.com/install | bash
++        '';
++      };
++    in
++    {
++      devShells.${system}.default = pkgs.mkShell {
++        buildInputs = with pkgs; [
++          nodejs_22 git curl cacert
++          (mkNpmHarness "@anthropic-ai/claude-code" versions."claude-code".version)
++          (mkNpmHarness "opencode-ai" versions.opencode.version)
++          (mkNpmHarness "@openai/codex" versions.codex.version)
++          (mkNpmHarness "hermes-agent" versions.hermes.version)
++          (mkNpmHarness "@mariozechner/pi-coding-agent" versions.pi.version)
++          (mkNpmHarness "@deepseek-ai/dsh" versions.deepseek.version)
++        ];
++        shellHook = ''
++          echo "harness-hub playground shell — run \`detect\` to see the pinned harnesses."
++          if command -v agent >/dev/null 2>&1; then
++            echo "cursor agent: $(command -v agent)"
++          else
++            echo "cursor agent: NOT INSTALLED (detection-only; see flake.nix cursorFhs)"
++          fi
++        '';
++      };
++    };
++}
++
++# HASH FILL (one-run procedure, best-effort — pending):
++#   1. `nix develop` — nix fails each fetch reporting the expected sha256 /
++#      npmDepsHash; paste each into the matching placeholder above.
++#   2. Re-run `nix develop` until the shell enters.
++#   3. If a package needs a prebuilt-binary treatment, replace its
++#      mkNpmHarness call with a runCommand fetch and note it inline.
+diff --git a/harness-versions.json b/harness-versions.json
+new file mode 100644
+index 0000000..139cefc
+--- /dev/null
++++ b/harness-versions.json
+@@ -0,0 +1,44 @@
++{
++  "claude-code": {
++    "displayName": "Claude Code",
++    "version": "2.1.272",
++    "verifiedDate": "2026-09-15",
++    "install": { "method": "npm", "package": "@anthropic-ai/claude-code" }
++  },
++  "cursor": {
++    "displayName": "Cursor",
++    "version": "3.x",
++    "verifiedDate": "2026-09-10",
++    "install": { "method": "fhs-wrapper", "url": "https://cursor.com/install" }
++  },
++  "opencode": {
++    "displayName": "OpenCode",
++    "version": "1.18.31",
++    "verifiedDate": "2026-09-14",
++    "install": { "method": "npm", "package": "opencode-ai" }
++  },
++  "codex": {
++    "displayName": "Codex",
++    "version": "0.153.2",
++    "verifiedDate": "2026-09-03",
++    "install": { "method": "npm", "package": "@openai/codex" }
++  },
++  "hermes": {
++    "displayName": "Hermes",
++    "version": "0.21.2",
++    "verifiedDate": "2026-09-11",
++    "install": { "method": "npm", "package": "hermes-agent" }
++  },
++  "pi": {
++    "displayName": "Pi",
++    "version": "0.85.0",
++    "verifiedDate": "2026-09-04",
++    "install": { "method": "npm", "package": "@mariozechner/pi-coding-agent" }
++  },
++  "deepseek": {
++    "displayName": "DeepSeek Harness",
++    "version": "0.1.5-rc.1",
++    "verifiedDate": "2026-09-10",
++    "install": { "method": "npm", "package": "@deepseek-ai/dsh" }
++  }
++}
+diff --git a/package.json b/package.json
+index e9a6577..da36b88 100644
+--- a/package.json
++++ b/package.json
+@@ -9,12 +9,13 @@
+   "engines": {
+     "node": ">=22.12.0"
+   },
+-  "files": ["dist"],
++  "files": ["dist", "harness-versions.json"],
+   "scripts": {
+     "build": "tsc -p tsconfig.json",
+     "test": "vitest run",
+     "test:watch": "vitest",
+-    "typecheck": "tsc -p tsconfig.json --noEmit"
++    "typecheck": "tsc -p tsconfig.json --noEmit",
++    "build:tools": "tsc -p tools/tsconfig.json"
+   },
+   "dependencies": {
+     "commander": "^15.0.0",
+diff --git a/src/cli.ts b/src/cli.ts
+index a23f33a..ea4f604 100644
+--- a/src/cli.ts
++++ b/src/cli.ts
+@@ -6,6 +6,8 @@ import { enableHarnesses } from './commands/enable';
+ import { disableHarnesses } from './commands/disable';
+ import { migrateHarness } from './commands/migrate';
+ import { runDoctorCommand } from './commands/doctor';
++import { formatList } from './commands/list';
++import { infoHarness } from './commands/info';
+ import { getPackageVersion } from './version';
+ 
+ function parseHarnessIds(values: string[]): HarnessId[] {
+@@ -23,7 +25,7 @@ export async function main(argv: string[]): Promise<number> {
+ 
+   program
+     .command('enable <harnesses...>')
+-    .option('--force', 'overwrite clobber-risk findings (CLAUDE.md, .claude/skills symlink target)')
++    .option('--force', 'overwrite clobber findings (CLAUDE.md, .claude/skills symlink target)')
+     .action((harnesses: string[], opts: { force?: boolean }) => {
+       const repoRoot = findRepoRoot(process.cwd());
+       const harnessIds = parseHarnessIds(harnesses);
+@@ -64,6 +66,16 @@ export async function main(argv: string[]): Promise<number> {
+     exitCode = result.exitCode;
+   });
+ 
++  program.command('list').action(() => {
++    console.log(formatList());
++  });
++
++  program.command('info <harness>').action((harness: string) => {
++    const result = infoHarness(harness);
++    console.log(result.output);
++    exitCode = result.exitCode;
++  });
++
+   try {
+     await program.parseAsync(argv, { from: 'user' });
+   } catch (err) {
+diff --git a/src/commands/enable.test.ts b/src/commands/enable.test.ts
+index 5355c17..725d810 100644
+--- a/src/commands/enable.test.ts
++++ b/src/commands/enable.test.ts
+@@ -92,7 +92,7 @@ describe('enableHarnesses', () => {
+     writeFileSync(join(repoRoot, 'CLAUDE.md'), '# hand-written\n');
+     const result = enableHarnesses(repoRoot, ['claude-code']);
+     expect(result.results[0].status).toBe('blocked');
+-    expect(result.results[0].blockingFindings[0].ruleId).toBe('clobber-risk');
++    expect(result.results[0].blockingFindings[0].ruleId).toBe('claude-md-clobber');
+   });
+ 
+   it('overwrites a hand-written CLAUDE.md with --force', () => {
+@@ -153,7 +153,7 @@ describe('enableHarnesses', () => {
+     writeFileSync(join(repoRoot, 'CLAUDE.md'), '# hand-written\n');
+     const result = enableHarnesses(repoRoot, ['claude-code']);
+     expect(result.results[0].status).toBe('blocked');
+-    expect(result.results[0].blockingFindings[0].ruleId).toBe('clobber-risk');
++    expect(result.results[0].blockingFindings[0].ruleId).toBe('claude-md-clobber');
+     expect(readFileSync(join(repoRoot, 'CLAUDE.md'), 'utf8')).toBe('# hand-written\n');
+   });
+ 
+diff --git a/src/commands/enable.ts b/src/commands/enable.ts
+index 8f6ff3c..217280d 100644
+--- a/src/commands/enable.ts
++++ b/src/commands/enable.ts
+@@ -56,7 +56,7 @@ export function enableHarnesses(
+       // Spec §8: re-running enable refreshes the wiring. Doctor's drift rule
+       // covers already-configured harnesses, so repair the symlinks idempotently
+       // when it reports drift (a blocking guard above keeps foreign files safe).
+-      const drifted = harnessFindings.some((f) => f.ruleId === 'generated-file-drift' && f.severity === 'warning');
++      const drifted = harnessFindings.some((f) => f.ruleId === 'claude-drift' && f.severity === 'warning');
+       if (drifted) {
+         wireMigrateSymlinkHarness(repoRoot, entry);
+       }
+diff --git a/src/commands/info.test.ts b/src/commands/info.test.ts
+new file mode 100644
+index 0000000..bf8027b
+--- /dev/null
++++ b/src/commands/info.test.ts
+@@ -0,0 +1,17 @@
++import { describe, it, expect } from 'vitest';
++import { formatInfo, infoHarness } from './info';
++
++describe('infoHarness', () => {
++  it('returns detail for a known harness', () => {
++    const out = formatInfo('claude-code');
++    expect(out).toContain('claude-code');
++    expect(out).toContain('CLAUDE.md');
++    expect(out).toContain('.claude/skills');
++  });
++
++  it('returns exit 1 for an unknown id, naming the valid ids', () => {
++    const result = infoHarness('bogus');
++    expect(result.exitCode).toBe(1);
++    expect(result.output).toContain('bogus');
++  });
++});
+diff --git a/src/commands/info.ts b/src/commands/info.ts
+new file mode 100644
+index 0000000..c23231e
+--- /dev/null
++++ b/src/commands/info.ts
+@@ -0,0 +1,32 @@
++import { isHarnessId, type HarnessId } from '../harnesses';
++import { getHarnessEntry } from '../registry';
++
++export function formatInfo(id: HarnessId): string {
++  const e = getHarnessEntry(id);
++  const lines = [`${e.displayName} (${e.id})`, `  version: ${e.verifiedVersion} (verified ${e.verifiedDate})`];
++  if (e.agentsDoc.mode === 'symlink' && e.agentsDoc.symlinkPath) {
++    lines.push(`  agent doc: symlink -> ${e.agentsDoc.symlinkPath}`);
++  } else {
++    lines.push(`  agent doc: native (reads AGENTS.md)`);
++  }
++  if (e.skills.mode === 'migrate-symlink' && e.skills.symlinkPath) {
++    lines.push(`  skills: migrate-symlink -> ${e.skills.symlinkPath}`);
++  } else {
++    lines.push(`  skills: native (reads .agents/skills/)`);
++  }
++  if (e.skills.trustGate) {
++    lines.push(`  trust gate: ${e.skills.trustGate.trustCommand}`);
++    lines.push(`  trust ledger: ~/${e.skills.trustGate.configPathFromHome}`);
++  }
++  return lines.join('\n');
++}
++
++export function infoHarness(id: string): { output: string; exitCode: number } {
++  if (!isHarnessId(id)) {
++    return {
++      output: `harness-hub info: unrecognized harness id "${id}" (valid: claude-code, cursor, opencode, codex, hermes, pi, deepseek)`,
++      exitCode: 1,
++    };
++  }
++  return { output: formatInfo(id), exitCode: 0 };
++}
+diff --git a/src/commands/list.test.ts b/src/commands/list.test.ts
+new file mode 100644
+index 0000000..6af8efe
+--- /dev/null
++++ b/src/commands/list.test.ts
+@@ -0,0 +1,23 @@
++import { describe, it, expect } from 'vitest';
++import { ALL_HARNESS_IDS } from '../harnesses';
++import { formatList } from './list';
++
++describe('formatList', () => {
++  it('names every harness id', () => {
++    const out = formatList();
++    for (const id of ALL_HARNESS_IDS) expect(out).toContain(id);
++  });
++
++  it('shows each harness version', () => {
++    const out = formatList();
++    expect(out).toContain('2.1.272'); // claude-code
++    expect(out).toContain('1.18.31'); // opencode
++  });
++
++  it('is sorted by harness id', () => {
++    const out = formatList();
++    const expected = [...ALL_HARNESS_IDS].sort();
++    const positions = expected.map((id) => out.indexOf(id));
++    expect([...positions].sort((a, b) => a - b)).toEqual(positions);
++  });
++});
+diff --git a/src/commands/list.ts b/src/commands/list.ts
+new file mode 100644
+index 0000000..13abca6
+--- /dev/null
++++ b/src/commands/list.ts
+@@ -0,0 +1,24 @@
++import { ALL_HARNESS_IDS } from '../harnesses';
++import { getHarnessEntry } from '../registry';
++
++function pad(value: string, width: number): string {
++  return value.length >= width ? value : value + ' '.repeat(width - value.length);
++}
++
++export function formatList(): string {
++  const rows = [...ALL_HARNESS_IDS].sort().map((id) => {
++    const e = getHarnessEntry(id);
++    const skills = e.skills.mode === 'migrate-symlink' ? 'migrate-symlink' : e.skills.mode;
++    return [
++      pad(e.id, 12),
++      pad(e.displayName, 18),
++      pad(e.verifiedVersion, 12),
++      pad(e.agentsDoc.mode, 12),
++      skills,
++    ].join(' ');
++  });
++  return [
++    `${pad('ID', 12)}${pad('NAME', 18)}${pad('VERSION', 12)}${pad('AGENT DOC', 12)}SKILLS`,
++    ...rows,
++  ].join('\n');
++}
+diff --git a/src/commands/migrate.test.ts b/src/commands/migrate.test.ts
+index 0ec099e..8c0ef0b 100644
+--- a/src/commands/migrate.test.ts
++++ b/src/commands/migrate.test.ts
+@@ -53,22 +53,22 @@ describe('migrateHarness', () => {
+     expect(second.output).toContain('nothing to migrate');
+   });
+ 
+-  it('refuses to adopt an entry without a SKILL.md (clobber-risk)', () => {
++  it('refuses to adopt an entry without a SKILL.md (invalid skill)', () => {
+     mkdirSync(join(repoRoot, '.claude', 'skills', 'bad'), { recursive: true });
+     writeFileSync(join(repoRoot, '.claude', 'skills', 'bad', 'notaskill.md'), 'junk');
+     const result = migrateHarness(repoRoot, 'claude-code');
+     expect(result.exitCode).toBe(1);
+-    expect(result.output).toContain('clobber-risk');
++    expect(result.output).toContain('invalid skill');
+     expect(result.output).toContain('bad');
+     expect(existsSync(join(repoRoot, '.agents', 'skills', 'bad'))).toBe(false);
+   });
+ 
+-  it('refuses to adopt an entry with invalid frontmatter (clobber-risk)', () => {
++  it('refuses to adopt an entry with invalid frontmatter (invalid skill)', () => {
+     mkdirSync(join(repoRoot, '.claude', 'skills', 'badname'), { recursive: true });
+     writeFileSync(join(repoRoot, '.claude', 'skills', 'badname', 'SKILL.md'), '---\nname: Bad_Name\ndescription: x\n---\nbody');
+     const result = migrateHarness(repoRoot, 'claude-code');
+     expect(result.exitCode).toBe(1);
+-    expect(result.output).toContain('clobber-risk');
++    expect(result.output).toContain('invalid skill');
+     expect(existsSync(join(repoRoot, '.agents', 'skills', 'badname'))).toBe(false);
+   });
+ 
+diff --git a/src/commands/migrate.ts b/src/commands/migrate.ts
+index ab4c2aa..2fe00f8 100644
+--- a/src/commands/migrate.ts
++++ b/src/commands/migrate.ts
+@@ -59,7 +59,7 @@ export function migrateHarness(repoRoot: string, harnessId: HarnessId): MigrateC
+   }
+ 
+   // Spec §6: validate every entry against the skill-shape/frontmatter contract
+-  // BEFORE adopting it — anything that fails is a clobber-risk error, because
++  // BEFORE adopting it — anything that fails is an invalid-skill error, because
+   // adopting junk would poison every future enable with canon-wide errors.
+   const invalid = toCopy.filter((e) => {
+     const { hasSkillMd, frontmatter } = readHarnessSkillFrontmatter(join(e.harnessSkillPath, 'SKILL.md'));
+@@ -70,7 +70,7 @@ export function migrateHarness(repoRoot: string, harnessId: HarnessId): MigrateC
+       (e) => `  ${entry.skills.symlinkPath}/${e.name}/ fails the skill contract (missing or invalid SKILL.md frontmatter)`
+     );
+     return {
+-      output: `harness-hub migrate: clobber-risk — refusing to adopt invalid skill(s), fix by hand and re-run:\n${lines.join('\n')}`,
++      output: `harness-hub migrate: invalid skill — refusing to adopt invalid skill(s), fix by hand and re-run:\n${lines.join('\n')}`,
+       exitCode: 1,
+     };
+   }
+diff --git a/src/doctor/rules/clobberRisk.test.ts b/src/doctor/rules/clobberRisk.test.ts
+index 0df77ef..8387b69 100644
+--- a/src/doctor/rules/clobberRisk.test.ts
++++ b/src/doctor/rules/clobberRisk.test.ts
+@@ -36,6 +36,7 @@ describe('clobberRiskRule', () => {
+     writeFileSync(join(repoRoot, 'CLAUDE.md'), '# hand-written\n');
+     const findings = clobberRiskRule.check(makeCtx(repoRoot, ['claude-code']));
+     expect(findings.some((f) => f.message.includes('CLAUDE.md'))).toBe(true);
++    expect(findings.some((f) => f.ruleId === 'claude-md-clobber')).toBe(true);
+     expect(findings.every((f) => f.forceable)).toBe(true);
+   });
+ 
+@@ -44,6 +45,7 @@ describe('clobberRiskRule', () => {
+     symlinkSync('/somewhere/else', join(repoRoot, '.claude', 'skills'));
+     const findings = clobberRiskRule.check(makeCtx(repoRoot, ['claude-code']));
+     expect(findings.some((f) => f.message.includes('.claude/skills'))).toBe(true);
++    expect(findings.some((f) => f.ruleId === 'claude-skills-clobber')).toBe(true);
+   });
+ 
+   it('does not flag .claude/skills when it is a real directory (handled by the skill-migration rule instead)', () => {
+diff --git a/src/doctor/rules/clobberRisk.ts b/src/doctor/rules/clobberRisk.ts
+index 0f3fc87..57143fc 100644
+--- a/src/doctor/rules/clobberRisk.ts
++++ b/src/doctor/rules/clobberRisk.ts
+@@ -42,7 +42,7 @@ export const clobberRiskRule: DoctorRule = {
+         const target = relativeSymlinkTarget(ctx.repoRoot, entry.agentsDoc.symlinkPath, join(ctx.repoRoot, AGENTS_MD_FILENAME));
+         if (pathPresent(linkPath) && !isSymlinkTo(linkPath, target)) {
+           findings.push({
+-            ruleId: 'clobber-risk',
++            ruleId: 'claude-md-clobber',
+             severity: 'error',
+             message: `${entry.agentsDoc.symlinkPath} exists and is not a symlink to AGENTS.md.`,
+             remediation: `Remove or back up ${entry.agentsDoc.symlinkPath}, or re-run enable with --force to replace it.`,
+@@ -57,7 +57,7 @@ export const clobberRiskRule: DoctorRule = {
+         const target = relativeSymlinkTarget(ctx.repoRoot, entry.skills.symlinkPath, skillsRootDir(ctx.repoRoot));
+         if (pathPresent(linkPath) && lstatSync(linkPath).isSymbolicLink() && !isSymlinkTo(linkPath, target)) {
+           findings.push({
+-            ruleId: 'clobber-risk',
++            ruleId: 'claude-skills-clobber',
+             severity: 'error',
+             message: `${entry.skills.symlinkPath} is a symlink, but not to .agents/skills.`,
+             remediation: `Remove the existing ${entry.skills.symlinkPath} symlink, or re-run enable with --force to replace it.`,
+diff --git a/src/doctor/rules/configValidity.test.ts b/src/doctor/rules/configValidity.test.ts
+index 8b911a6..580b7d3 100644
+--- a/src/doctor/rules/configValidity.test.ts
++++ b/src/doctor/rules/configValidity.test.ts
+@@ -19,16 +19,19 @@ describe('configValidityRule', () => {
+   it('flags unknown harness ids in an otherwise-valid config', () => {
+     const ctx = makeCtx({ status: 'ok', format: 'yaml', path: '/repo/harness-hub.yaml', harnesses: [], unknownIds: ['bogus'] });
+     expect(configValidityRule.check(ctx)[0].severity).toBe('error');
++    expect(configValidityRule.check(ctx)[0].ruleId).toBe('config-unknown-harness-id');
+   });
+ 
+   it('flags ambiguous config (both files present)', () => {
+     const ctx = makeCtx({ status: 'ambiguous', yamlPath: '/repo/harness-hub.yaml', jsonPath: '/repo/harness-hub.json' });
+     expect(configValidityRule.check(ctx)[0].severity).toBe('error');
++    expect(configValidityRule.check(ctx)[0].ruleId).toBe('config-ambiguous');
+   });
+ 
+   it('flags a parse error', () => {
+     const ctx = makeCtx({ status: 'parse-error', format: 'yaml', path: '/repo/harness-hub.yaml', error: 'bad yaml' });
+     expect(configValidityRule.check(ctx)[0].message).toContain('bad yaml');
++    expect(configValidityRule.check(ctx)[0].ruleId).toBe('config-parse-error');
+   });
+ 
+   it('flags an invalid shape', () => {
+@@ -39,5 +42,6 @@ describe('configValidityRule', () => {
+       reason: '"harnesses" must be an array',
+     });
+     expect(configValidityRule.check(ctx)[0].severity).toBe('error');
++    expect(configValidityRule.check(ctx)[0].ruleId).toBe('config-invalid-shape');
+   });
+ });
+diff --git a/src/doctor/rules/configValidity.ts b/src/doctor/rules/configValidity.ts
+index b4fc178..936f8ea 100644
+--- a/src/doctor/rules/configValidity.ts
++++ b/src/doctor/rules/configValidity.ts
+@@ -12,7 +12,7 @@ export const configValidityRule: DoctorRule = {
+         if (config.unknownIds.length === 0) return [];
+         return [
+           {
+-            ruleId: 'config-validity',
++            ruleId: 'config-unknown-harness-id',
+             severity: 'error',
+             message: `${config.path} lists unrecognized harness id(s): ${config.unknownIds.join(', ')}`,
+             remediation: 'Remove or fix the unrecognized id(s) in the "harnesses" list.',
+@@ -22,7 +22,7 @@ export const configValidityRule: DoctorRule = {
+       case 'ambiguous':
+         return [
+           {
+-            ruleId: 'config-validity',
++            ruleId: 'config-ambiguous',
+             severity: 'error',
+             message: `Both ${config.yamlPath} and ${config.jsonPath} exist.`,
+             remediation: 'Keep exactly one of harness-hub.yaml / harness-hub.json and delete the other.',
+@@ -32,7 +32,7 @@ export const configValidityRule: DoctorRule = {
+       case 'parse-error':
+         return [
+           {
+-            ruleId: 'config-validity',
++            ruleId: 'config-parse-error',
+             severity: 'error',
+             message: `${config.path} could not be parsed: ${config.error}`,
+             remediation: `Fix the syntax error in ${config.path}.`,
+@@ -42,7 +42,7 @@ export const configValidityRule: DoctorRule = {
+       case 'invalid-shape':
+         return [
+           {
+-            ruleId: 'config-validity',
++            ruleId: 'config-invalid-shape',
+             severity: 'error',
+             message: `${config.path} is invalid: ${config.reason}`,
+             remediation: `Fix ${config.path} so it has a top-level "harnesses" array.`,
+diff --git a/src/doctor/rules/generatedFileDrift.test.ts b/src/doctor/rules/generatedFileDrift.test.ts
+index 0443a1f..c2fe2b1 100644
+--- a/src/doctor/rules/generatedFileDrift.test.ts
++++ b/src/doctor/rules/generatedFileDrift.test.ts
+@@ -24,7 +24,7 @@ describe('generatedFileDriftRule', () => {
+ 
+   it('warns when the symlinks are missing', () => {
+     expect(generatedFileDriftRule.check(makeCtx(repoRoot))).toEqual([
+-      expect.objectContaining({ ruleId: 'generated-file-drift', severity: 'warning', harnessId: 'claude-code' }),
++      expect.objectContaining({ ruleId: 'claude-drift', severity: 'warning', harnessId: 'claude-code' }),
+     ]);
+   });
+ 
+diff --git a/src/doctor/rules/generatedFileDrift.ts b/src/doctor/rules/generatedFileDrift.ts
+index ea96d3e..2f6ae20 100644
+--- a/src/doctor/rules/generatedFileDrift.ts
++++ b/src/doctor/rules/generatedFileDrift.ts
+@@ -32,7 +32,7 @@ export const generatedFileDriftRule: DoctorRule = {
+ 
+       if (problems.length > 0) {
+         findings.push({
+-          ruleId: 'generated-file-drift',
++          ruleId: 'claude-drift',
+           severity: 'warning',
+           message: `${id} is enabled, but ${problems.join(' and ')} ${problems.length > 1 ? 'are' : 'is'} missing or not the expected symlink.`,
+           remediation: `Re-run \`harness-hub enable ${id}\` to restore the expected symlink(s).`,
+diff --git a/src/doctor/rules/skillFrontmatter.test.ts b/src/doctor/rules/skillFrontmatter.test.ts
+index ce7da58..b726603 100644
+--- a/src/doctor/rules/skillFrontmatter.test.ts
++++ b/src/doctor/rules/skillFrontmatter.test.ts
+@@ -29,7 +29,9 @@ describe('skillFrontmatterRule', () => {
+     const dir = join(repoRoot, '.agents', 'skills', 'writing-tests');
+     mkdirSync(dir, { recursive: true });
+     writeFileSync(join(dir, 'SKILL.md'), '---\nname: other\ndescription: x\n---\n');
+-    expect(skillFrontmatterRule.check(makeCtx(repoRoot)).length).toBeGreaterThan(0);
++    const findings = skillFrontmatterRule.check(makeCtx(repoRoot));
++    expect(findings.length).toBeGreaterThan(0);
++    expect(findings.some((f) => f.ruleId === 'skill-name-mismatch')).toBe(true);
+   });
+ 
+   it('skips directories with no SKILL.md (left to skill-shape rule)', () => {
+diff --git a/src/doctor/rules/skillFrontmatter.ts b/src/doctor/rules/skillFrontmatter.ts
+index 25e678a..7c695be 100644
+--- a/src/doctor/rules/skillFrontmatter.ts
++++ b/src/doctor/rules/skillFrontmatter.ts
+@@ -2,6 +2,14 @@ import { listSkillDirNames, readSkillFrontmatter } from '../../canon';
+ import { validateSkillFrontmatter } from '../../skills/validate';
+ import type { DoctorRule, Finding } from '../types';
+ 
++const CODE_TO_RULE_ID: Record<string, string> = {
++  'missing-name': 'skill-missing-name',
++  'invalid-name-format': 'skill-invalid-name-format',
++  'name-mismatch': 'skill-name-mismatch',
++  'missing-description': 'skill-missing-description',
++  'description-length': 'skill-description-length',
++};
++
+ export const skillFrontmatterRule: DoctorRule = {
+   id: 'skill-frontmatter',
+   applies: () => true,
+@@ -12,7 +20,7 @@ export const skillFrontmatterRule: DoctorRule = {
+       if (!hasSkillMd) continue; // reported by skill-shape instead
+       for (const issue of validateSkillFrontmatter(name, frontmatter)) {
+         findings.push({
+-          ruleId: 'skill-frontmatter',
++          ruleId: CODE_TO_RULE_ID[issue.code] ?? 'skill-frontmatter',
+           severity: 'error',
+           message: issue.message,
+           remediation: `Fix the frontmatter in .agents/skills/${name}/SKILL.md.`,
+diff --git a/src/doctor/rules/skillShape.test.ts b/src/doctor/rules/skillShape.test.ts
+index c74890d..18bcfc5 100644
+--- a/src/doctor/rules/skillShape.test.ts
++++ b/src/doctor/rules/skillShape.test.ts
+@@ -30,6 +30,7 @@ describe('skillShapeRule', () => {
+     const findings = skillShapeRule.check(makeCtx(repoRoot));
+     expect(findings).toHaveLength(1);
+     expect(findings[0].message).toContain('empty');
++    expect(findings[0].ruleId).toBe('skill-missing-skill-md');
+   });
+ 
+   it('flags a flat .md file at the skills root', () => {
+@@ -38,5 +39,6 @@ describe('skillShapeRule', () => {
+     const findings = skillShapeRule.check(makeCtx(repoRoot));
+     expect(findings).toHaveLength(1);
+     expect(findings[0].message).toContain('stray.md');
++    expect(findings[0].ruleId).toBe('skill-flat-file');
+   });
+ });
+diff --git a/src/doctor/rules/skillShape.ts b/src/doctor/rules/skillShape.ts
+index 354ddf5..1d32d4c 100644
+--- a/src/doctor/rules/skillShape.ts
++++ b/src/doctor/rules/skillShape.ts
+@@ -8,7 +8,7 @@ export const skillShapeRule: DoctorRule = {
+     const findings: Finding[] = [];
+     for (const entryName of listSkillsRootNonDirEntries(ctx.repoRoot)) {
+       findings.push({
+-        ruleId: 'skill-shape',
++        ruleId: 'skill-flat-file',
+         severity: 'error',
+         message: `.agents/skills/${entryName} is not a directory — skills must be laid out as <name>/SKILL.md.`,
+         remediation: `Move ${entryName} into its own <skill-name>/SKILL.md directory.`,
+@@ -19,7 +19,7 @@ export const skillShapeRule: DoctorRule = {
+       const { hasSkillMd } = readSkillFrontmatter(ctx.repoRoot, name);
+       if (!hasSkillMd) {
+         findings.push({
+-          ruleId: 'skill-shape',
++          ruleId: 'skill-missing-skill-md',
+           severity: 'error',
+           message: `.agents/skills/${name}/ has no SKILL.md.`,
+           remediation: `Add .agents/skills/${name}/SKILL.md, or remove the directory if it isn't a skill.`,
+diff --git a/src/registry/data.ts b/src/registry/data.ts
+index 06194a1..d1f5e6b 100644
+--- a/src/registry/data.ts
++++ b/src/registry/data.ts
+@@ -1,44 +1,47 @@
+ import type { HarnessId } from '../harnesses';
+ import type { HarnessEntry } from './types';
++import { loadVersionsManifest } from './versions';
++
++const versions = loadVersionsManifest();
+ 
+ export const HARNESS_REGISTRY: Record<HarnessId, HarnessEntry> = {
+   'claude-code': {
+     id: 'claude-code',
+-    displayName: 'Claude Code',
+-    verifiedVersion: 'unpinned', // opaque native binary — not version-pinned in harness-versions.insight.md
+-    verifiedDate: '2026-09-20',
++    displayName: versions['claude-code'].displayName,
++    verifiedVersion: versions['claude-code'].version,
++    verifiedDate: versions['claude-code'].verifiedDate,
+     agentsDoc: { mode: 'symlink', symlinkPath: 'CLAUDE.md' },
+     skills: { mode: 'migrate-symlink', symlinkPath: '.claude/skills' },
+   },
+   cursor: {
+     id: 'cursor',
+-    displayName: 'Cursor',
+-    verifiedVersion: '3.x',
+-    verifiedDate: '2026-09-10',
++    displayName: versions.cursor.displayName,
++    verifiedVersion: versions.cursor.version,
++    verifiedDate: versions.cursor.verifiedDate,
+     agentsDoc: { mode: 'native' },
+     skills: { mode: 'native' },
+   },
+   opencode: {
+     id: 'opencode',
+-    displayName: 'OpenCode',
+-    verifiedVersion: '1.18.31',
+-    verifiedDate: '2026-09-14',
++    displayName: versions.opencode.displayName,
++    verifiedVersion: versions.opencode.version,
++    verifiedDate: versions.opencode.verifiedDate,
+     agentsDoc: { mode: 'native' },
+     skills: { mode: 'native' },
+   },
+   codex: {
+     id: 'codex',
+-    displayName: 'Codex',
+-    verifiedVersion: '0.153.2',
+-    verifiedDate: '2026-09-03',
++    displayName: versions.codex.displayName,
++    verifiedVersion: versions.codex.version,
++    verifiedDate: versions.codex.verifiedDate,
+     agentsDoc: { mode: 'native' },
+     skills: { mode: 'native' },
+   },
+   hermes: {
+     id: 'hermes',
+-    displayName: 'Hermes',
+-    verifiedVersion: '0.21.2',
+-    verifiedDate: '2026-09-11',
++    displayName: versions.hermes.displayName,
++    verifiedVersion: versions.hermes.version,
++    verifiedDate: versions.hermes.verifiedDate,
+     agentsDoc: { mode: 'native' },
+     skills: {
+       mode: 'native',
+@@ -51,17 +54,17 @@ export const HARNESS_REGISTRY: Record<HarnessId, HarnessEntry> = {
+   },
+   pi: {
+     id: 'pi',
+-    displayName: 'Pi',
+-    verifiedVersion: '0.85.0',
+-    verifiedDate: '2026-09-04',
++    displayName: versions.pi.displayName,
++    verifiedVersion: versions.pi.version,
++    verifiedDate: versions.pi.verifiedDate,
+     agentsDoc: { mode: 'native' },
+     skills: { mode: 'native' },
+   },
+   deepseek: {
+     id: 'deepseek',
+-    displayName: 'DeepSeek Harness',
+-    verifiedVersion: '0.1.5-rc.1',
+-    verifiedDate: '2026-09-10',
++    displayName: versions.deepseek.displayName,
++    verifiedVersion: versions.deepseek.version,
++    verifiedDate: versions.deepseek.verifiedDate,
+     agentsDoc: { mode: 'native' },
+     skills: { mode: 'native' },
+   },
+diff --git a/src/registry/versions.test.ts b/src/registry/versions.test.ts
+new file mode 100644
+index 0000000..aa821ff
+--- /dev/null
++++ b/src/registry/versions.test.ts
+@@ -0,0 +1,40 @@
++import { describe, it, expect } from 'vitest';
++import { ALL_HARNESS_IDS } from '../harnesses';
++import { loadVersionsManifest } from './versions';
++import { getHarnessEntry } from './index';
++
++describe('harness versions manifest', () => {
++  it('has an entry for every recognized harness id', () => {
++    const manifest = loadVersionsManifest();
++    expect(Object.keys(manifest).sort()).toEqual([...ALL_HARNESS_IDS].sort());
++  });
++
++  it('registers each harness version as a non-empty string', () => {
++    const manifest = loadVersionsManifest();
++    for (const id of ALL_HARNESS_IDS) {
++      expect(manifest[id].version).toBeTruthy();
++      expect(manifest[id].verifiedDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
++    }
++  });
++
++  it('derives the registry verifiedVersion from the manifest (no drift)', () => {
++    const manifest = loadVersionsManifest();
++    for (const id of ALL_HARNESS_IDS) {
++      expect(getHarnessEntry(id).verifiedVersion).toBe(manifest[id].version);
++      expect(getHarnessEntry(id).verifiedDate).toBe(manifest[id].verifiedDate);
++    }
++  });
++
++  it('pins claude-code to the researched 2.1.272 (not "unpinned")', () => {
++    expect(loadVersionsManifest()['claude-code'].version).toBe('2.1.272');
++  });
++
++  it('marks cursor install as fhs-wrapper and every other harness as npm', () => {
++    const m = loadVersionsManifest();
++    expect(m.cursor.install.method).toBe('fhs-wrapper');
++    for (const id of ALL_HARNESS_IDS) {
++      if (id === 'cursor') continue;
++      expect(m[id].install.method).toBe('npm');
++    }
++  });
++});
+diff --git a/src/registry/versions.ts b/src/registry/versions.ts
+new file mode 100644
+index 0000000..66279ff
+--- /dev/null
++++ b/src/registry/versions.ts
+@@ -0,0 +1,29 @@
++import { readFileSync } from 'node:fs';
++import { join } from 'node:path';
++import { ALL_HARNESS_IDS, type HarnessId } from '../harnesses';
++
++export interface HarnessInstallManifest {
++  method: 'npm' | 'fhs-wrapper';
++  package?: string;
++  url?: string;
++}
++
++export interface HarnessVersionEntry {
++  displayName: string;
++  version: string;
++  verifiedDate: string;
++  install: HarnessInstallManifest;
++}
++
++// Compiled to dist/registry/versions.js, so __dirname is dist/registry and the
++// manifest is two levels up at the repo root (and ships in the npm package via
++// the "files" array).
++const MANIFEST_PATH = join(__dirname, '..', '..', 'harness-versions.json');
++
++export function loadVersionsManifest(): Record<HarnessId, HarnessVersionEntry> {
++  const raw = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8')) as Record<string, HarnessVersionEntry>;
++  for (const id of ALL_HARNESS_IDS) {
++    if (!(id in raw)) throw new Error(`harness-versions.json is missing an entry for "${id}"`);
++  }
++  return raw as Record<HarnessId, HarnessVersionEntry>;
++}
+diff --git a/src/wiring/migrateSymlink.ts b/src/wiring/migrateSymlink.ts
+index 305db39..712b709 100644
+--- a/src/wiring/migrateSymlink.ts
++++ b/src/wiring/migrateSymlink.ts
+@@ -29,8 +29,9 @@ function ensureSymlink(repoRoot: string, linkRelPath: string, targetAbsPath: str
+ 
+ /**
+  * Wires a harness's AGENTS.md symlink and/or skills symlink per its registry
+- * entry. Assumes doctor's blocking checks (clobber-risk, unmigrated-skills,
+- * skill-migration-collision) already passed for this harness.
++ * entry. Assumes doctor's blocking checks (claude-md-clobber,
++ * claude-skills-clobber, unmigrated-skills, skill-migration-collision)
++ * already passed for this harness.
+  */
+ export function wireMigrateSymlinkHarness(repoRoot: string, entry: HarnessEntry): void {
+   if (entry.skills.mode === 'migrate-symlink' && entry.skills.symlinkPath) {
+diff --git a/tools/detect.mjs b/tools/detect.mjs
+new file mode 100644
+index 0000000..c80b5a5
+--- /dev/null
++++ b/tools/detect.mjs
+@@ -0,0 +1,17 @@
++import { createRequire } from 'node:module';
++import { existsSync } from 'node:fs';
++import { fileURLToPath } from 'node:url';
++import { dirname, join } from 'node:path';
++
++const here = dirname(fileURLToPath(import.meta.url));
++const entry = join(here, 'dist', 'detect.js');
++if (!existsSync(entry)) {
++  console.error('tools not built — run: npm run build:tools');
++  process.exit(1);
++}
++const require = createRequire(import.meta.url);
++const { main } = require(entry);
++main(process.argv.slice(2)).then((code) => process.exit(code), (err) => {
++  console.error(err instanceof Error ? err.message : String(err));
++  process.exit(1);
++});
+diff --git a/tools/detect.test.ts b/tools/detect.test.ts
+new file mode 100644
+index 0000000..fd8f2ed
+--- /dev/null
++++ b/tools/detect.test.ts
+@@ -0,0 +1,26 @@
++import { describe, it, expect } from 'vitest';
++import { formatDetect } from './detect';
++import { detectWith } from './detect';
++
++describe('detect', () => {
++  it('reports a missing harness with null installed', () => {
++    const rows = detectWith(() => null);
++    const cursor = rows.find((r) => r.id === 'cursor')!;
++    expect(cursor.installed).toBeNull();
++    expect(cursor.pin).toBe('3.x');
++  });
++
++  it('reports an installed harness version', () => {
++    const rows = detectWith((id) => (id === 'opencode' ? '1.16.2\n' : null));
++    expect(rows.find((r) => r.id === 'opencode')!.installed).toBe('1.16.2');
++    expect(rows.find((r) => r.id === 'claude-code')!.installed).toBeNull();
++  });
++
++  it('formats every harness id and its pin', () => {
++    const rows = detectWith(() => null);
++    const out = formatDetect(rows);
++    expect(out).toContain('claude-code');
++    expect(out).toContain('2.1.272');
++    expect(out).toContain('NOT INSTALLED');
++  });
++});
+diff --git a/tools/detect.ts b/tools/detect.ts
+new file mode 100644
+index 0000000..b76d7d5
+--- /dev/null
++++ b/tools/detect.ts
+@@ -0,0 +1,91 @@
++import { spawnSync } from 'node:child_process';
++import { existsSync } from 'node:fs';
++import { homedir } from 'node:os';
++import { join } from 'node:path';
++import { loadManifest } from './manifest';
++
++export interface DetectRow {
++  id: string;
++  displayName: string;
++  pin: string;
++  installed: string | null;
++}
++
++// Detection targets the harness *binary*, not any same-name editor binary.
++// Cursor is the headless `agent` CLI, NOT the `cursor` IDE (spec R3).
++const BINARY_CANDIDATES: Record<string, string[]> = {
++  'claude-code': ['claude'],
++  // The standalone cursor-agent CLI installs itself at ~/.local/bin/agent,
++  // which is frequently not on non-interactive PATHs.
++  cursor: ['agent', join(homedir(), '.cursor', 'bin', 'agent'), join(homedir(), '.local', 'bin', 'agent')],
++  opencode: ['opencode'],
++  codex: ['codex'],
++  hermes: ['hermes'],
++  pi: ['pi'],
++  deepseek: ['dsh'],
++};
++
++function which(bin: string): string | null {
++  const r = spawnSync('sh', ['-c', `command -v "${bin}"`], { encoding: 'utf8' });
++  return r.status === 0 && r.stdout.trim() ? r.stdout.trim() : null;
++}
++
++export function resolveBinary(id: string): string | null {
++  for (const cand of BINARY_CANDIDATES[id] ?? []) {
++    if (cand.includes(homedir())) {
++      if (existsSync(cand)) return cand;
++    } else {
++      const found = which(cand);
++      if (found) return found;
++    }
++  }
++  return null;
++}
++
++export type VersionRunner = (id: string) => string | null;
++
++export function runVersion(id: string): string | null {
++  const bin = resolveBinary(id);
++  if (!bin) return null;
++  const r = spawnSync(bin, ['--version'], { encoding: 'utf8', timeout: 15000 });
++  if (r.error || r.status !== 0) return null;
++  const firstLine = (r.stdout ?? '').split('\n')[0].trim();
++  return firstLine || null;
++}
++
++export function detectWith(runner: VersionRunner = runVersion): DetectRow[] {
++  const manifest = loadManifest();
++  return Object.keys(manifest)
++    .sort()
++    .map((id) => {
++      // Normalize injected-runner output to runVersion's contract: trimmed,
++      // non-empty, else null (runVersion already trims its own result).
++      const v = runner(id);
++      const installed = v === null ? null : v.trim() || null;
++      return {
++        id,
++        displayName: manifest[id].displayName,
++        pin: manifest[id].version,
++        installed,
++      };
++    });
++}
++
++export function detectInstalled(): DetectRow[] {
++  return detectWith(runVersion);
++}
++
++export function formatDetect(rows: DetectRow[]): string {
++  const header = ['ID', 'NAME', 'PIN', 'INSTALLED'];
++  const pad = (v: string, w: number) => (v.length >= w ? v : v + ' '.repeat(w - v.length));
++  const lines = [header.map((h, i) => pad(h, [14, 18, 14, 40][i])).join('')];
++  for (const r of rows) {
++    lines.push([pad(r.id, 14), pad(r.displayName, 18), pad(r.pin, 14), r.installed ?? 'NOT INSTALLED'].join(''));
++  }
++  return lines.join('\n');
++}
++
++export async function main(_argv: string[]): Promise<number> {
++  console.log(formatDetect(detectInstalled()));
++  return 0;
++}
+diff --git a/tools/fs.ts b/tools/fs.ts
+new file mode 100644
+index 0000000..996cf56
+--- /dev/null
++++ b/tools/fs.ts
+@@ -0,0 +1,23 @@
++import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
++import { dirname, join } from 'node:path';
++import type { Asset } from './primitives';
++
++export function writeAssets(target: string, assets: Asset[]): void {
++  for (const a of assets) {
++    const full = join(target, a.path);
++    mkdirSync(dirname(full), { recursive: true });
++    writeFileSync(full, a.content, 'utf8');
++  }
++}
++
++/** Removes everything under `target` except `.git`, preserving a consumer repo's nested git. */
++export function resetTarget(target: string): void {
++  if (!existsSync(target)) {
++    mkdirSync(target, { recursive: true });
++    return;
++  }
++  for (const entry of readdirSync(target, { withFileTypes: true })) {
++    if (entry.name === '.git') continue;
++    rmSync(join(target, entry.name), { recursive: true, force: true });
++  }
++}
+diff --git a/tools/generate.mjs b/tools/generate.mjs
+new file mode 100644
+index 0000000..6cad253
+--- /dev/null
++++ b/tools/generate.mjs
+@@ -0,0 +1,17 @@
++import { createRequire } from 'node:module';
++import { existsSync } from 'node:fs';
++import { fileURLToPath } from 'node:url';
++import { dirname, join } from 'node:path';
++
++const here = dirname(fileURLToPath(import.meta.url));
++const entry = join(here, 'dist', 'generate.js');
++if (!existsSync(entry)) {
++  console.error('tools not built — run: npm run build:tools');
++  process.exit(1);
++}
++const require = createRequire(import.meta.url);
++const { main } = require(entry);
++main(process.argv.slice(2)).then((code) => process.exit(code), (err) => {
++  console.error(err instanceof Error ? err.message : String(err));
++  process.exit(1);
++});
+diff --git a/tools/generate.test.ts b/tools/generate.test.ts
+new file mode 100644
+index 0000000..e7dc355
+--- /dev/null
++++ b/tools/generate.test.ts
+@@ -0,0 +1,39 @@
++import { describe, it, expect, beforeEach, afterEach } from 'vitest';
++import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import { SCENARIOS } from './scenarios';
++import { generateScenario } from './generate';
++
++describe('scenario generator', () => {
++  let target: string;
++  beforeEach(() => { target = mkdtempSync(join(tmpdir(), 'hh-gen-')); });
++  afterEach(() => { rmSync(target, { recursive: true, force: true }); });
++
++  it('every scenario is named and has a description', () => {
++    for (const s of Object.values(SCENARIOS)) {
++      expect(s.name).toBeTruthy();
++      expect(s.description).toBeTruthy();
++    }
++  });
++
++  it('baseline renders AGENTS.md and one valid skill', () => {
++    generateScenario(target, 'baseline');
++    expect(existsSync(join(target, 'AGENTS.md'))).toBe(true);
++    expect(existsSync(join(target, '.agents', 'skills', 'writing-tests', 'SKILL.md'))).toBe(true);
++  });
++
++  it('claude-md-clobber renders a hand-written CLAUDE.md', () => {
++    generateScenario(target, 'claude-md-clobber');
++    expect(readFileSync(join(target, 'CLAUDE.md'), 'utf8')).toContain('hand-written');
++  });
++
++  it('missing-agents-md renders no AGENTS.md', () => {
++    generateScenario(target, 'missing-agents-md');
++    expect(existsSync(join(target, 'AGENTS.md'))).toBe(false);
++  });
++
++  it('rejects an unknown scenario naming the available ones', () => {
++    expect(() => generateScenario(target, 'nope')).toThrow(/Unknown scenario/);
++  });
++});
+diff --git a/tools/generate.ts b/tools/generate.ts
+new file mode 100644
+index 0000000..dabce40
+--- /dev/null
++++ b/tools/generate.ts
+@@ -0,0 +1,38 @@
++import { writeAssets, resetTarget } from './fs';
++import { SCENARIOS } from './scenarios';
++
++export function generateScenario(target: string, name: string): void {
++  const scenario = SCENARIOS[name];
++  if (!scenario) {
++    throw new Error(`Unknown scenario "${name}". Available: ${Object.keys(SCENARIOS).join(', ')}`);
++  }
++  resetTarget(target);
++  writeAssets(target, scenario.assets(target));
++  scenario.actions?.(target);
++}
++
++export function parseArgs(argv: string[]): { target: string; scenario: string } {
++  let target = process.cwd();
++  const positional: string[] = [];
++  for (let i = 0; i < argv.length; i++) {
++    if (argv[i] === '--target') { target = argv[++i]; }
++    else if (argv[i].startsWith('--target=')) { target = argv[i].slice('--target='.length); }
++    else { positional.push(argv[i]); }
++  }
++  if (positional.length !== 1) {
++    throw new Error('Usage: generate <scenario> [--target <dir>]');
++  }
++  return { scenario: positional[0], target };
++}
++
++export async function main(argv: string[]): Promise<number> {
++  try {
++    const { target, scenario } = parseArgs(argv);
++    generateScenario(target, scenario);
++    console.log(`generated "${scenario}" into ${target}`);
++    return 0;
++  } catch (err) {
++    console.error(err instanceof Error ? err.message : String(err));
++    return 1;
++  }
++}
+diff --git a/tools/manifest.ts b/tools/manifest.ts
+new file mode 100644
+index 0000000..671283e
+--- /dev/null
++++ b/tools/manifest.ts
+@@ -0,0 +1,27 @@
++import { existsSync, readFileSync } from 'node:fs';
++import { join } from 'node:path';
++
++export interface HarnessManifestEntry {
++  displayName: string;
++  version: string;
++  verifiedDate: string;
++  install: { method: string; package?: string; url?: string };
++}
++
++// tools/ code runs from two layouts: source under vitest (__dirname =
++// <repo>/tools) and compiled via build:tools (__dirname = <repo>/tools/dist).
++// The manifest sits at the package root, so probe the candidates in order and
++// use the first that exists (src/registry/versions.ts has the same two-up join
++// and works in both layouts only because both of its dirs are two levels deep).
++const MANIFEST_CANDIDATES = [
++  join(__dirname, 'harness-versions.json'),
++  join(__dirname, '..', 'harness-versions.json'),
++  join(__dirname, '..', '..', 'harness-versions.json'),
++];
++
++const MANIFEST_PATH =
++  MANIFEST_CANDIDATES.find((p) => existsSync(p)) ?? MANIFEST_CANDIDATES[MANIFEST_CANDIDATES.length - 1];
++
++export function loadManifest(): Record<string, HarnessManifestEntry> {
++  return JSON.parse(readFileSync(MANIFEST_PATH, 'utf8')) as Record<string, HarnessManifestEntry>;
++}
+diff --git a/tools/primitives.test.ts b/tools/primitives.test.ts
+new file mode 100644
+index 0000000..651c894
+--- /dev/null
++++ b/tools/primitives.test.ts
+@@ -0,0 +1,34 @@
++import { describe, it, expect, beforeEach, afterEach } from 'vitest';
++import { mkdtempSync, rmSync, existsSync, readFileSync, readdirSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import { agentDoc, skill, raw, writeAssets, resetTarget } from './primitives';
++
++describe('primitives', () => {
++  let target: string;
++  beforeEach(() => { target = mkdtempSync(join(tmpdir(), 'hh-tools-')); });
++  afterEach(() => { rmSync(target, { recursive: true, force: true }); });
++
++  it('agentDoc returns a root-level asset', () => {
++    expect(agentDoc('AGENTS.md', '# Agents\n')).toEqual({ path: 'AGENTS.md', content: '# Agents\n' });
++  });
++
++  it('skill serializes frontmatter and body at <location>/<name>/SKILL.md', () => {
++    const asset = skill({ name: 'writing-tests', location: '.agents/skills', frontmatter: { name: 'writing-tests', description: 'Write tests.' }, body: 'Body\n' });
++    expect(asset.path).toBe('.agents/skills/writing-tests/SKILL.md');
++    expect(asset.content).toContain('name: writing-tests');
++    expect(asset.content).toContain('Body');
++  });
++
++  it('writeAssets writes files and creates parent dirs', () => {
++    writeAssets(target, [raw('a/b/c.md', 'x')]);
++    expect(readFileSync(join(target, 'a', 'b', 'c.md'), 'utf8')).toBe('x');
++  });
++
++  it('resetTarget clears everything except .git', () => {
++    writeAssets(target, [raw('keep.md', 'x'), raw('.git/HEAD', 'ref: refs/heads/main')]);
++    resetTarget(target);
++    expect(existsSync(join(target, 'keep.md'))).toBe(false);
++    expect(existsSync(join(target, '.git', 'HEAD'))).toBe(true);
++  });
++});
+diff --git a/tools/primitives.ts b/tools/primitives.ts
+new file mode 100644
+index 0000000..5525744
+--- /dev/null
++++ b/tools/primitives.ts
+@@ -0,0 +1,30 @@
++import { stringify } from 'yaml';
++import { join } from 'node:path';
++
++export interface Asset {
++  path: string;
++  content: string;
++}
++
++export function agentDoc(path: string, content: string): Asset {
++  return { path, content };
++}
++
++export function skill(opts: {
++  name: string;
++  location: string;
++  frontmatter: Record<string, unknown>;
++  body?: string;
++}): Asset {
++  const fm = Object.keys(opts.frontmatter).length > 0
++    ? `---\n${stringify(opts.frontmatter)}---\n`
++    : '';
++  const body = opts.body ?? `Placeholder body for skill "${opts.name}".\n`;
++  return { path: join(opts.location, opts.name, 'SKILL.md'), content: fm + body };
++}
++
++export function raw(path: string, content: string): Asset {
++  return { path, content };
++}
++
++export { writeAssets, resetTarget } from './fs';
+diff --git a/tools/probe.mjs b/tools/probe.mjs
+new file mode 100644
+index 0000000..4bfc0c6
+--- /dev/null
++++ b/tools/probe.mjs
+@@ -0,0 +1,17 @@
++import { createRequire } from 'node:module';
++import { existsSync } from 'node:fs';
++import { fileURLToPath } from 'node:url';
++import { dirname, join } from 'node:path';
++
++const here = dirname(fileURLToPath(import.meta.url));
++const entry = join(here, 'dist', 'probe.js');
++if (!existsSync(entry)) {
++  console.error('tools not built — run: npm run build:tools');
++  process.exit(1);
++}
++const require = createRequire(import.meta.url);
++const { main } = require(entry);
++main(process.argv.slice(2)).then((code) => process.exit(code), (err) => {
++  console.error(err instanceof Error ? err.message : String(err));
++  process.exit(1);
++});
+diff --git a/tools/probe.test.ts b/tools/probe.test.ts
+new file mode 100644
+index 0000000..2988d8c
+--- /dev/null
++++ b/tools/probe.test.ts
+@@ -0,0 +1,23 @@
++import { describe, it, expect } from 'vitest';
++import { probeHarness, PROBE_COMMANDS } from './probe';
++
++describe('probe', () => {
++  it('skips a missing harness with a clear message', () => {
++    const result = probeHarness('codex', '/repo', () => { throw new Error('not installed'); });
++    expect(result.exitCode).toBe(1);
++    expect(result.output).toContain('not installed');
++  });
++
++  it('has a probe command for every harness id', () => {
++    for (const id of ['claude-code', 'cursor', 'opencode', 'codex', 'hermes', 'pi', 'deepseek']) {
++      expect(PROBE_COMMANDS[id]).toBeDefined();
++    }
++  });
++
++  it('runs the headless agent form for cursor with --workspace', () => {
++    let captured: string[] = [];
++    probeHarness('cursor', '/repo', (spec) => { captured = spec.args; return ''; });
++    expect(captured).toContain('--workspace');
++    expect(captured).toContain('/repo');
++  });
++});
+diff --git a/tools/probe.ts b/tools/probe.ts
+new file mode 100644
+index 0000000..aedb91e
+--- /dev/null
++++ b/tools/probe.ts
+@@ -0,0 +1,59 @@
++import { spawnSync } from 'node:child_process';
++import { resolveBinary } from './detect';
++
++export interface ProbeSpec {
++  cmd: string;
++  args: string[];
++}
++
++// First-cut headless invocations. The four well-documented harnesses use their
++// scripted modes; hermes/pi/deepseek use their most likely `run`/`-p` forms
++// and are confirmed by running this tool itself (spec R4 — probe is the
++// verification aid).
++export const PROBE_COMMANDS: Record<string, (repoRoot: string) => ProbeSpec> = {
++  'claude-code': () => ({ cmd: 'claude', args: ['-p', 'List the skills available in this repo and summarize AGENTS.md.'] }),
++  cursor: (root) => ({ cmd: 'agent', args: ['-p', 'List your skills and summarize AGENTS.md.', '--mode', 'ask', '--trust', '--workspace', root] }),
++  opencode: () => ({ cmd: 'opencode', args: ['run', 'List the skills available in this repo and summarize AGENTS.md.'] }),
++  codex: () => ({ cmd: 'codex', args: ['exec', 'List the skills available in this repo and summarize AGENTS.md.'] }),
++  hermes: () => ({ cmd: 'hermes', args: ['run', 'List the skills available in this repo and summarize AGENTS.md.'] }),
++  pi: () => ({ cmd: 'pi', args: ['-p', 'List the skills available in this repo and summarize AGENTS.md.'] }),
++  deepseek: () => ({ cmd: 'dsh', args: ['run', 'List the skills available in this repo and summarize AGENTS.md.'] }),
++};
++
++export type ProbeRunner = (spec: ProbeSpec) => string;
++
++function defaultRunner(spec: ProbeSpec): string {
++  const r = spawnSync(spec.cmd, spec.args, { encoding: 'utf8', stdio: 'inherit', timeout: 120000 });
++  return r.error ? r.error.message : '';
++}
++
++export function probeHarness(
++  id: string,
++  repoRoot: string,
++  run: ProbeRunner = defaultRunner
++): { exitCode: number; output: string } {
++  const make = PROBE_COMMANDS[id];
++  if (!make) {
++    return { exitCode: 1, output: `probe: unrecognized harness id "${id}".` };
++  }
++  const binary = resolveBinary(id);
++  if (!binary) {
++    return { exitCode: 1, output: `probe: ${id} is not installed (run detect to see the roster).` };
++  }
++  const spec = make(repoRoot);
++  const err = run(spec);
++  if (err) {
++    return { exitCode: 1, output: `probe: ${id} failed: ${err}` };
++  }
++  return { exitCode: 0, output: `probe: ${id} ran (${spec.cmd} ${spec.args.join(' ')}).` };
++}
++
++export async function main(argv: string[]): Promise<number> {
++  if (argv.length !== 1) {
++    console.error('Usage: probe <harness-id>');
++    return 1;
++  }
++  const result = probeHarness(argv[0], process.cwd());
++  if (result.output) console.log(result.output);
++  return result.exitCode;
++}
+diff --git a/tools/scenarios/ambiguous-config.ts b/tools/scenarios/ambiguous-config.ts
+new file mode 100644
+index 0000000..a30e9b0
+--- /dev/null
++++ b/tools/scenarios/ambiguous-config.ts
+@@ -0,0 +1,14 @@
++import { raw } from '../primitives';
++import type { Scenario } from './index';
++import { validAgentsDoc, validSkill, harnessConfig } from './shared';
++
++export const ambiguousConfig: Scenario = {
++  name: 'ambiguous-config',
++  description: 'Both harness-hub.yaml and harness-hub.json present (config-validity → config-ambiguous).',
++  assets: () => [
++    validAgentsDoc(),
++    validSkill(),
++    harnessConfig([]),
++    raw('harness-hub.json', '{"harnesses":[]}\n'),
++  ],
++};
+diff --git a/tools/scenarios/baseline.ts b/tools/scenarios/baseline.ts
+new file mode 100644
+index 0000000..128f5d6
+--- /dev/null
++++ b/tools/scenarios/baseline.ts
+@@ -0,0 +1,8 @@
++import type { Scenario } from './index';
++import { validAgentsDoc, validSkill } from './shared';
++
++export const baseline: Scenario = {
++  name: 'baseline',
++  description: 'Valid canon (AGENTS.md + a valid skill), nothing wired — doctor finds nothing.',
++  assets: () => [validAgentsDoc(), validSkill()],
++};
+diff --git a/tools/scenarios/claude-drift.ts b/tools/scenarios/claude-drift.ts
+new file mode 100644
+index 0000000..0a66214
+--- /dev/null
++++ b/tools/scenarios/claude-drift.ts
+@@ -0,0 +1,16 @@
++import { mkdirSync, rmSync, symlinkSync } from 'node:fs';
++import { join } from 'node:path';
++import type { Scenario } from './index';
++import { validAgentsDoc, validSkill } from './shared';
++
++export const claudeDrift: Scenario = {
++  name: 'claude-drift',
++  description: 'Wired claude-code whose CLAUDE.md symlink is then removed (generated-file-drift → claude-drift).',
++  assets: () => [validAgentsDoc(), validSkill()],
++  actions: (target) => {
++    symlinkSync('AGENTS.md', join(target, 'CLAUDE.md'));
++    mkdirSync(join(target, '.claude'), { recursive: true });
++    symlinkSync(join('..', '.agents', 'skills'), join(target, '.claude', 'skills'));
++    rmSync(join(target, 'CLAUDE.md')); // introduce drift
++  },
++};
+diff --git a/tools/scenarios/claude-enable.ts b/tools/scenarios/claude-enable.ts
+new file mode 100644
+index 0000000..b866bdd
+--- /dev/null
++++ b/tools/scenarios/claude-enable.ts
+@@ -0,0 +1,8 @@
++import type { Scenario } from './index';
++import { validAgentsDoc, validSkill } from './shared';
++
++export const claudeEnable: Scenario = {
++  name: 'claude-enable',
++  description: 'Valid canon, ready for `harness-hub enable claude-code` (CLAUDE.md + .claude/skills symlinks).',
++  assets: () => [validAgentsDoc(), validSkill()],
++};
+diff --git a/tools/scenarios/claude-md-clobber.ts b/tools/scenarios/claude-md-clobber.ts
+new file mode 100644
+index 0000000..fba1bf0
+--- /dev/null
++++ b/tools/scenarios/claude-md-clobber.ts
+@@ -0,0 +1,9 @@
++import { raw } from '../primitives';
++import type { Scenario } from './index';
++import { validAgentsDoc, validSkill } from './shared';
++
++export const claudeMdClobber: Scenario = {
++  name: 'claude-md-clobber',
++  description: 'Hand-written CLAUDE.md blocks `enable claude-code` (clobber-risk → claude-md-clobber).',
++  assets: () => [validAgentsDoc(), validSkill(), raw('CLAUDE.md', '# hand-written\n')],
++};
+diff --git a/tools/scenarios/claude-skills-clobber.ts b/tools/scenarios/claude-skills-clobber.ts
+new file mode 100644
+index 0000000..5ccdfb9
+--- /dev/null
++++ b/tools/scenarios/claude-skills-clobber.ts
+@@ -0,0 +1,14 @@
++import { mkdirSync, symlinkSync } from 'node:fs';
++import { join } from 'node:path';
++import type { Scenario } from './index';
++import { validAgentsDoc, validSkill } from './shared';
++
++export const claudeSkillsClobber: Scenario = {
++  name: 'claude-skills-clobber',
++  description: '.claude/skills is a symlink pointing outside the repo (clobber-risk → claude-skills-clobber).',
++  assets: () => [validAgentsDoc(), validSkill()],
++  actions: (target) => {
++    mkdirSync(join(target, '.claude'), { recursive: true });
++    symlinkSync('/somewhere/else', join(target, '.claude', 'skills'));
++  },
++};
+diff --git a/tools/scenarios/config-invalid-shape.ts b/tools/scenarios/config-invalid-shape.ts
+new file mode 100644
+index 0000000..76df16b
+--- /dev/null
++++ b/tools/scenarios/config-invalid-shape.ts
+@@ -0,0 +1,9 @@
++import { raw } from '../primitives';
++import type { Scenario } from './index';
++import { validAgentsDoc } from './shared';
++
++export const configInvalidShape: Scenario = {
++  name: 'config-invalid-shape',
++  description: 'harness-hub.yaml has no `harnesses` array (config-validity → config-invalid-shape).',
++  assets: () => [validAgentsDoc(), raw('harness-hub.yaml', 'foo: bar\n')],
++};
+diff --git a/tools/scenarios/config-parse-error.ts b/tools/scenarios/config-parse-error.ts
+new file mode 100644
+index 0000000..3f05334
+--- /dev/null
++++ b/tools/scenarios/config-parse-error.ts
+@@ -0,0 +1,9 @@
++import { raw } from '../primitives';
++import type { Scenario } from './index';
++import { validAgentsDoc } from './shared';
++
++export const configParseError: Scenario = {
++  name: 'config-parse-error',
++  description: 'harness-hub.yaml is malformed YAML (config-validity → config-parse-error).',
++  assets: () => [validAgentsDoc(), raw('harness-hub.yaml', 'harnesses: [unclosed\n')],
++};
+diff --git a/tools/scenarios/flat-skill-file.ts b/tools/scenarios/flat-skill-file.ts
+new file mode 100644
+index 0000000..9a93d47
+--- /dev/null
++++ b/tools/scenarios/flat-skill-file.ts
+@@ -0,0 +1,9 @@
++import { raw } from '../primitives';
++import type { Scenario } from './index';
++import { validAgentsDoc } from './shared';
++
++export const flatSkillFile: Scenario = {
++  name: 'flat-skill-file',
++  description: 'A flat file .agents/skills/stray.md instead of stray/SKILL.md (skill-shape → skill-flat-file).',
++  assets: () => [validAgentsDoc(), raw('.agents/skills/stray.md', '# stray\n')],
++};
+diff --git a/tools/scenarios/hermes-trust.ts b/tools/scenarios/hermes-trust.ts
+new file mode 100644
+index 0000000..214d06c
+--- /dev/null
++++ b/tools/scenarios/hermes-trust.ts
+@@ -0,0 +1,8 @@
++import type { Scenario } from './index';
++import { validAgentsDoc, validSkill } from './shared';
++
++export const hermesTrust: Scenario = {
++  name: 'hermes-trust',
++  description: 'Valid canon, ready for `harness-hub enable hermes` (trust-gate → hermes-trust: trust before enabling).',
++  assets: () => [validAgentsDoc(), validSkill()],
++};
+diff --git a/tools/scenarios/index.ts b/tools/scenarios/index.ts
+new file mode 100644
+index 0000000..31ab1b4
+--- /dev/null
++++ b/tools/scenarios/index.ts
+@@ -0,0 +1,40 @@
++import type { Asset } from '../primitives';
++
++export interface Scenario {
++  name: string;
++  description: string;
++  assets(target: string): Asset[];
++  actions?(target: string): void;
++}
++
++import { baseline } from './baseline';
++import { claudeEnable } from './claude-enable';
++import { claudeMdClobber } from './claude-md-clobber';
++import { claudeSkillsClobber } from './claude-skills-clobber';
++import { claudeDrift } from './claude-drift';
++import { missingAgentsMd } from './missing-agents-md';
++import { ambiguousConfig } from './ambiguous-config';
++import { configInvalidShape } from './config-invalid-shape';
++import { configParseError } from './config-parse-error';
++import { unknownHarnessId } from './unknown-harness-id';
++import { flatSkillFile } from './flat-skill-file';
++import { skillMissingSkillMd } from './skill-missing-skill-md';
++import { skillMissingName } from './skill-missing-name';
++import { skillNameMismatch } from './skill-name-mismatch';
++import { skillMissingDescription } from './skill-missing-description';
++import { unmigratedSkills } from './unmigrated-skills';
++import { skillMigrationCollision } from './skill-migration-collision';
++import { hermesTrust } from './hermes-trust';
++import { multi } from './multi';
++
++export const SCENARIOS: Record<string, Scenario> = {
++  baseline, 'claude-enable': claudeEnable, 'claude-md-clobber': claudeMdClobber,
++  'claude-skills-clobber': claudeSkillsClobber, 'claude-drift': claudeDrift,
++  'missing-agents-md': missingAgentsMd, 'ambiguous-config': ambiguousConfig,
++  'config-invalid-shape': configInvalidShape, 'config-parse-error': configParseError,
++  'unknown-harness-id': unknownHarnessId, 'flat-skill-file': flatSkillFile,
++  'skill-missing-skill-md': skillMissingSkillMd, 'skill-missing-name': skillMissingName,
++  'skill-name-mismatch': skillNameMismatch, 'skill-missing-description': skillMissingDescription,
++  'unmigrated-skills': unmigratedSkills, 'skill-migration-collision': skillMigrationCollision,
++  'hermes-trust': hermesTrust, multi,
++};
+diff --git a/tools/scenarios/missing-agents-md.ts b/tools/scenarios/missing-agents-md.ts
+new file mode 100644
+index 0000000..9c16d9d
+--- /dev/null
++++ b/tools/scenarios/missing-agents-md.ts
+@@ -0,0 +1,8 @@
++import type { Scenario } from './index';
++import { validSkill } from './shared';
++
++export const missingAgentsMd: Scenario = {
++  name: 'missing-agents-md',
++  description: 'No AGENTS.md in the repo (canon-presence → missing-agents-md).',
++  assets: () => [validSkill()],
++};
+diff --git a/tools/scenarios/multi.ts b/tools/scenarios/multi.ts
+new file mode 100644
+index 0000000..ccbc2df
+--- /dev/null
++++ b/tools/scenarios/multi.ts
+@@ -0,0 +1,8 @@
++import type { Scenario } from './index';
++import { validAgentsDoc, validSkill } from './shared';
++
++export const multi: Scenario = {
++  name: 'multi',
++  description: 'Valid canon ready to enable several harnesses at once (composition; no single rule).',
++  assets: () => [validAgentsDoc(), validSkill()],
++};
+diff --git a/tools/scenarios/shared.ts b/tools/scenarios/shared.ts
+new file mode 100644
+index 0000000..b82efe0
+--- /dev/null
++++ b/tools/scenarios/shared.ts
+@@ -0,0 +1,18 @@
++import { agentDoc, skill, raw, type Asset } from '../primitives';
++
++export function validAgentsDoc(): Asset {
++  return agentDoc('AGENTS.md', '# Agents\n\nMinimal consumer-repo agent doc for harness-hub testing.\n');
++}
++
++export function validSkill(): Asset {
++  return skill({
++    name: 'writing-tests',
++    location: '.agents/skills',
++    frontmatter: { name: 'writing-tests', description: 'Write failing tests before implementation.' },
++    body: 'Write the failing test first.\n',
++  });
++}
++
++export function harnessConfig(harnesses: string[]): Asset {
++  return raw('harness-hub.yaml', `harnesses:\n${harnesses.map((h) => `  - ${h}`).join('\n')}\n`);
++}
+diff --git a/tools/scenarios/skill-migration-collision.ts b/tools/scenarios/skill-migration-collision.ts
+new file mode 100644
+index 0000000..608b539
+--- /dev/null
++++ b/tools/scenarios/skill-migration-collision.ts
+@@ -0,0 +1,16 @@
++import { raw } from '../primitives';
++import type { Scenario } from './index';
++import { validAgentsDoc, validSkill } from './shared';
++
++export const skillMigrationCollision: Scenario = {
++  name: 'skill-migration-collision',
++  description: '.claude/skills copy differs from the canon skill of the same name (skill-migration → skill-migration-collision).',
++  assets: () => [
++    validAgentsDoc(),
++    validSkill(),
++    raw(
++      '.claude/skills/writing-tests/SKILL.md',
++      '---\nname: writing-tests\ndescription: x\n---\ndifferent\n',
++    ),
++  ],
++};
+diff --git a/tools/scenarios/skill-missing-description.ts b/tools/scenarios/skill-missing-description.ts
+new file mode 100644
+index 0000000..c59b067
+--- /dev/null
++++ b/tools/scenarios/skill-missing-description.ts
+@@ -0,0 +1,12 @@
++import { skill } from '../primitives';
++import type { Scenario } from './index';
++import { validAgentsDoc } from './shared';
++
++export const skillMissingDescription: Scenario = {
++  name: 'skill-missing-description',
++  description: 'Skill frontmatter missing `description` (skill-frontmatter → skill-missing-description).',
++  assets: () => [
++    validAgentsDoc(),
++    skill({ name: 'writing-tests', location: '.agents/skills', frontmatter: { name: 'writing-tests' } }),
++  ],
++};
+diff --git a/tools/scenarios/skill-missing-name.ts b/tools/scenarios/skill-missing-name.ts
+new file mode 100644
+index 0000000..35de2ad
+--- /dev/null
++++ b/tools/scenarios/skill-missing-name.ts
+@@ -0,0 +1,12 @@
++import { skill } from '../primitives';
++import type { Scenario } from './index';
++import { validAgentsDoc } from './shared';
++
++export const skillMissingName: Scenario = {
++  name: 'skill-missing-name',
++  description: 'Skill frontmatter missing `name` (skill-frontmatter → skill-missing-name).',
++  assets: () => [
++    validAgentsDoc(),
++    skill({ name: 'anon', location: '.agents/skills', frontmatter: { description: 'x' } }),
++  ],
++};
+diff --git a/tools/scenarios/skill-missing-skill-md.ts b/tools/scenarios/skill-missing-skill-md.ts
+new file mode 100644
+index 0000000..08ea8c9
+--- /dev/null
++++ b/tools/scenarios/skill-missing-skill-md.ts
+@@ -0,0 +1,9 @@
++import { raw } from '../primitives';
++import type { Scenario } from './index';
++import { validAgentsDoc } from './shared';
++
++export const skillMissingSkillMd: Scenario = {
++  name: 'skill-missing-skill-md',
++  description: 'A skill directory with no SKILL.md inside (skill-shape → skill-missing-skill-md).',
++  assets: () => [validAgentsDoc(), raw('.agents/skills/empty/notes.txt', 'not a skill\n')],
++};
+diff --git a/tools/scenarios/skill-name-mismatch.ts b/tools/scenarios/skill-name-mismatch.ts
+new file mode 100644
+index 0000000..b8c344e
+--- /dev/null
++++ b/tools/scenarios/skill-name-mismatch.ts
+@@ -0,0 +1,16 @@
++import { skill } from '../primitives';
++import type { Scenario } from './index';
++import { validAgentsDoc } from './shared';
++
++export const skillNameMismatch: Scenario = {
++  name: 'skill-name-mismatch',
++  description: 'Skill frontmatter `name` differs from its directory name (skill-frontmatter → skill-name-mismatch).',
++  assets: () => [
++    validAgentsDoc(),
++    skill({
++      name: 'writing-tests',
++      location: '.agents/skills',
++      frontmatter: { name: 'other', description: 'x' },
++    }),
++  ],
++};
+diff --git a/tools/scenarios/unknown-harness-id.ts b/tools/scenarios/unknown-harness-id.ts
+new file mode 100644
+index 0000000..af2133e
+--- /dev/null
++++ b/tools/scenarios/unknown-harness-id.ts
+@@ -0,0 +1,8 @@
++import type { Scenario } from './index';
++import { validAgentsDoc, validSkill, harnessConfig } from './shared';
++
++export const unknownHarnessId: Scenario = {
++  name: 'unknown-harness-id',
++  description: 'harness-hub.yaml lists an unrecognized harness id (config-validity → config-unknown-harness-id).',
++  assets: () => [validAgentsDoc(), validSkill(), harnessConfig(['bogus'])],
++};
+diff --git a/tools/scenarios/unmigrated-skills.ts b/tools/scenarios/unmigrated-skills.ts
+new file mode 100644
+index 0000000..45073e3
+--- /dev/null
++++ b/tools/scenarios/unmigrated-skills.ts
+@@ -0,0 +1,9 @@
++import { raw } from '../primitives';
++import type { Scenario } from './index';
++import { validAgentsDoc, validSkill } from './shared';
++
++export const unmigratedSkills: Scenario = {
++  name: 'unmigrated-skills',
++  description: '.claude/skills contains a skill with no canon counterpart (skill-migration → unmigrated-skills).',
++  assets: () => [validAgentsDoc(), validSkill(), raw('.claude/skills/a/SKILL.md', 'body\n')],
++};
+diff --git a/tools/tsconfig.json b/tools/tsconfig.json
+new file mode 100644
+index 0000000..af17249
+--- /dev/null
++++ b/tools/tsconfig.json
+@@ -0,0 +1,17 @@
++{
++  "compilerOptions": {
++    "target": "ES2022",
++    "module": "CommonJS",
++    "lib": ["ES2022"],
++    "outDir": "dist",
++    "rootDir": ".",
++    "strict": true,
++    "types": ["node"],
++    "esModuleInterop": true,
++    "skipLibCheck": true,
++    "declaration": false,
++    "sourceMap": false
++  },
++  "include": ["**/*.ts"],
++  "exclude": ["**/*.test.ts", "dist", "node_modules"]
++}
+diff --git a/vitest.config.mjs b/vitest.config.mjs
+new file mode 100644
+index 0000000..0ef7ad5
+--- /dev/null
++++ b/vitest.config.mjs
+@@ -0,0 +1,9 @@
++import { defineConfig } from 'vitest/config';
++
++export default defineConfig({
++  resolve: {
++    // `./generate` must resolve to generate.ts (the tested core), not
++    // generate.mjs (the CLI shim) — Vite's default order prefers .mjs.
++    extensions: ['.ts', '.tsx', '.mjs', '.js', '.jsx', '.json'],
++  },
++});
+diff --git a/vitest.config.ts b/vitest.config.ts
+deleted file mode 100644
+index 96eb6ab..0000000
+--- a/vitest.config.ts
++++ /dev/null
+@@ -1,8 +0,0 @@
+-import { defineConfig } from 'vitest/config';
+-
+-export default defineConfig({
+-  test: {
+-    include: ['src/**/*.test.ts'],
+-    environment: 'node',
+-  },
+-});
