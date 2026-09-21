@@ -1,5 +1,5 @@
 .cursor
 dist/
 node_modules/
-playground/
+test/env/**
 test/tools/dist/
