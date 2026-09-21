@@ -29,10 +29,25 @@ are git-ignored.**
 - The shipped **runtime CLI** (`src/`, the `harness-hub` binary, `list`/`info`,
   `doctor`, `enable`/`disable`, `migrate`) is product surface and stays put.
   This restructure touches only dev/env tooling — nothing under `src/`.
-- `harness-versions.json` is the single source of truth for harness versions
-  and stays at repo root (it feeds the runtime registry in `src/registry/`,
-  the tools manifest loader, and the flake). The flake and tools must keep
-  resolving it correctly after moving.
+- `config/config.json` is the single source of truth for harness versions and
+  stays at repo root (it feeds the runtime registry in `src/registry/`, the
+  tools manifest loader, and the flake). The manifest has a nested, extensible
+  shape — a top-level `harness` object holding a `versions` map:
+
+  ```json
+  {
+    "harness": {
+      "versions": {
+        "claude-code": { "displayName": "…", "version": "…", "verifiedDate": "…", "install": { … } },
+        "…": { … }
+      }
+    }
+  }
+  ```
+
+  The flake and tools must keep resolving it correctly after the move and
+  after reading through the new nesting (`harness.versions` instead of the
+  flat `harness-versions.json`).
 - `tools/` is already dev-only, compiled separately (`build:tools`), and
   excluded from the npm `files` array; it is the committed home of the
   generator/detection/probe logic. This restructure relocates it to
@@ -92,8 +107,10 @@ its own `.git`, generated scenario assets, npm-link wiring). `test/template/`,
 ### R2 — moved Nix flake (`test/flake.nix`)
 
 - Move `flake.nix` and `flake.lock` from root to `test/`.
-- The flake's `builtins.readFile ./harness-versions.json` must become
-  `../harness-versions.json` (the manifest stays at root).
+- The flake's `builtins.readFile ./config/config.json` reference must become
+  `../config/config.json` (the config stays at root) and read the nested
+  `harness.versions` object (`versions = cfg.harness.versions`) instead of
+  the flat top level.
 - `description`, `shellHook` prose, and the `nix develop` doc references must
   reflect the new location. `npm run shell` in an env (and `env shell`, R3)
   must settle `nix develop` against `test/flake.nix`, not the root.
@@ -162,18 +179,20 @@ today is small):
   about `generate.mjs`/`generate.ts` stays valid (no path literal to the repo
   root to change; verify the tools tests still resolve `.ts` over `.mjs` after
   the move).
-- `test/tools/manifest.ts` — the `harness-versions.json` candidate list is
-  positional (`__dirname`, `__dirname/..`, `__dirname/../..`). After the move
-  the manifest is one level further away: source layout (`__dirname =
+- `test/tools/manifest.ts` — the config (`config/config.json`) candidate list
+  is positional (`__dirname`, `__dirname/..`, `__dirname/../..`). After the
+  move the config is one level further away: source layout (`__dirname =
   test/tools`) needs `../..`, compiled layout (`__dirname = test/tools/dist`)
   needs `../../..` — extend the candidate list by one level (to `../../..`)
-  and keep it tolerant of source vs. compiled layouts.
-- `test/flake.nix` — `./harness-versions.json` → `../harness-versions.json`.
+  and keep it tolerant of source vs. compiled layouts. It must also read
+  through the nested `harness.versions` object (see R2's shape).
+- `test/flake.nix` — `./config/config.json` → `../config/config.json` (read
+  the nested `harness.versions`).
 - `test/template/package.json` — `../../tools/*` script paths (R1).
 - Any `nix develop` / "repo root" doc prose in `AGENTS.md`, `README.md`,
-  `docs/` that names `flake.nix` at root.
+  `deliverables/` that names `flake.nix` at root.
 
-### R7 — R9 observation ownership (consolidation)
+### R7 — nix-shell observation ownership (consolidation)
 
 - The `nix develop` prerequisite (R9 in the playground spec) is enforced/
   warned at two points, without double-warning:
@@ -192,6 +211,20 @@ today is small):
 - `harness-hub` runtime behaviour (including `list`'s TRUST GATE column and
   `info`'s detail) is unaffected by this restructure.
 
+### R9 — config relocation (`config/config.json`, nested `harness.versions`)
+
+- Move `harness-versions.json` → `config/config.json` and nest the harness
+  versions under a `harness.versions` object so the file is extensible
+  (future top-level keys can sit beside `harness`).
+- Update the two consumers of the manifest shape:
+  - `src/registry/versions.ts` — point `MANIFEST_PATH` at `config/config.json`
+    and read `raw.harness.versions` (instead of the flat top-level map). The
+    `package.json` `files` array must include `config/config.json` (replacing
+    `harness-versions.json`).
+  - `test/tools/manifest.ts` — read through `harness.versions` too (its
+    candidate-path logic is already covered in R6).
+- The flake reads `../config/config.json` and `cfg.harness.versions` (R2).
+
 ## Supersedes / interaction with prior spec
 
 - **`harness-hub-playground.spec.md` R6** — "single default playground, not a
@@ -201,8 +234,9 @@ today is small):
 - **`harness-hub-playground.spec.md` R7** — "no file under `playground/` is
   ever tracked" is superseded by "`test/template/` is tracked; `test/env/**`
   is not."
-- The prior deliverable's `docs/`  (spec/plan/progress/tasks) remain as
-  historical record (unmodified; archive per AGENTS.md later, if desired).
+- The prior deliverable's `deliverables/complete/…` (spec/plan/progress/tasks)
+  remain as historical record, with a `RESOLUTION.md` note recording what was
+  superseded and what was never constructed.
 
 ## Non-goals
 
@@ -211,7 +245,7 @@ today is small):
   deliverable living under `test/integration/`); this restructure leaves a
   home for them. Only the ability to construct/teardown their environments.
 - No nix hash-fill completion (still best-effort / known-pending).
-- No churn in `docs/complete/` (pre-existing, out of scope).
+- No churn in `deliverables/complete/` beyond the `RESOLUTION.md` note.
 
 ## Success criteria
 
@@ -225,7 +259,7 @@ today is small):
 4. `env create foo && generate <scenario> --target test/env/foo && detect &&
    probe` works from outside `test/tools` (cwd-independent via `import.meta.url`).
 5. `nix --flake test/ develop` (or `env shell`) enters the pinned shell;
-   `../harness-versions.json` resolves.
+   `../config/config.json` resolves (via the nested `harness.versions`).
 6. The full test suite (`npx vitest run`), `npm run typecheck`, and
    `npm run build:tools` are green after the move.
 7. `git status` is clean except the intentional removal of the old
