@@ -1,0 +1,65 @@
+# Review package: 4a085192927b727b622bea164377a7ef60307b35..HEAD
+
+## Commits
+8f83bd8 feat(registry): add cursor-cli harness id (IDE vs headless CLI split)
+
+## Files changed
+ src/harnesses.test.ts | 12 ++++++++++--
+ src/harnesses.ts      |  1 +
+ 2 files changed, 11 insertions(+), 2 deletions(-)
+
+## Diff
+diff --git a/src/harnesses.test.ts b/src/harnesses.test.ts
+index cea535e..a3d0314 100644
+--- a/src/harnesses.test.ts
++++ b/src/harnesses.test.ts
+@@ -1,20 +1,28 @@
+ import { describe, it, expect } from 'vitest';
+ import { ALL_HARNESS_IDS, isHarnessId } from './harnesses';
+ 
+ describe('harnesses', () => {
+-  it('lists exactly the seven recognized ids from spec §4', () => {
++  it('lists exactly the eight recognized ids', () => {
+     expect([...ALL_HARNESS_IDS].sort()).toEqual(
+-      ['claude-code', 'codex', 'cursor', 'deepseek', 'hermes', 'opencode', 'pi'].sort()
++      ['claude-code', 'codex', 'cursor', 'cursor-cli', 'deepseek', 'hermes', 'opencode', 'pi'].sort()
+     );
+   });
+ 
++  it('recognizes cursor-cli as an eighth id, distinct from cursor', () => {
++    expect(ALL_HARNESS_IDS).toContain('cursor-cli');
++    expect(ALL_HARNESS_IDS).toContain('cursor');
++    expect(ALL_HARNESS_IDS.length).toBe(8);
++    expect(isHarnessId('cursor-cli')).toBe(true);
++    expect(isHarnessId('cursor')).toBe(true);
++  });
++
+   it('isHarnessId accepts every recognized id', () => {
+     for (const id of ALL_HARNESS_IDS) {
+       expect(isHarnessId(id)).toBe(true);
+     }
+   });
+ 
+   it('isHarnessId rejects an unrecognized string', () => {
+     expect(isHarnessId('not-a-real-harness')).toBe(false);
+   });
+ });
+diff --git a/src/harnesses.ts b/src/harnesses.ts
+index 2e5fd77..c8b10f9 100644
+--- a/src/harnesses.ts
++++ b/src/harnesses.ts
+@@ -1,13 +1,14 @@
+ export const ALL_HARNESS_IDS = [
+   'claude-code',
+   'cursor',
++  'cursor-cli',
+   'opencode',
+   'codex',
+   'hermes',
+   'pi',
+   'deepseek',
+ ] as const;
+ 
+ export type HarnessId = (typeof ALL_HARNESS_IDS)[number];
+ 
+ export function isHarnessId(value: string): value is HarnessId {

@@ -1,0 +1,231 @@
+# Review package: 2f1c8d7..HEAD
+
+## Commits
+8723f18 feat: surface verified/unverified/unrecognized status in list and info
+
+## Files changed
+ src/cli.ts                |  6 ++++--
+ src/commands/info.test.ts |  5 +++++
+ src/commands/info.ts      | 17 +++++++++++------
+ src/commands/list.test.ts | 24 +++++++++++++++++-------
+ src/commands/list.ts      |  9 ++++++---
+ 5 files changed, 43 insertions(+), 18 deletions(-)
+
+## Diff
+diff --git a/src/cli.ts b/src/cli.ts
+index ea4f604..c93298a 100644
+--- a/src/cli.ts
++++ b/src/cli.ts
+@@ -1,20 +1,21 @@
+ // src/cli.ts
+ import { Command } from 'commander';
+ import { findRepoRoot } from './repo';
+ import { isHarnessId, type HarnessId } from './harnesses';
+ import { enableHarnesses } from './commands/enable';
+ import { disableHarnesses } from './commands/disable';
+ import { migrateHarness } from './commands/migrate';
+ import { runDoctorCommand } from './commands/doctor';
+ import { formatList } from './commands/list';
+ import { infoHarness } from './commands/info';
++import { detectInstalledVersions } from './harnessDetect';
+ import { getPackageVersion } from './version';
+ 
+ function parseHarnessIds(values: string[]): HarnessId[] {
+   const invalid = values.filter((v) => !isHarnessId(v));
+   if (invalid.length > 0) {
+     throw new Error(`Unrecognized harness id(s): ${invalid.join(', ')}`);
+   }
+   return values as HarnessId[];
+ }
+ 
+@@ -60,25 +61,26 @@ export async function main(argv: string[]): Promise<number> {
+   });
+ 
+   program.command('doctor').action(() => {
+     const repoRoot = findRepoRoot(process.cwd());
+     const result = runDoctorCommand(repoRoot);
+     console.log(result.output);
+     exitCode = result.exitCode;
+   });
+ 
+   program.command('list').action(() => {
+-    console.log(formatList());
++    console.log(formatList(detectInstalledVersions()));
+   });
+ 
+   program.command('info <harness>').action((harness: string) => {
+-    const result = infoHarness(harness);
++    const installed = detectInstalledVersions()[harness as HarnessId] ?? null;
++    const result = infoHarness(harness, installed);
+     console.log(result.output);
+     exitCode = result.exitCode;
+   });
+ 
+   try {
+     await program.parseAsync(argv, { from: 'user' });
+   } catch (err) {
+     if (err && typeof err === 'object' && 'code' in err) {
+       const code = (err as { code: string }).code;
+       if (code === 'commander.helpDisplayed' || code === 'commander.version') {
+diff --git a/src/commands/info.test.ts b/src/commands/info.test.ts
+index bf8027b..3f4d5e9 100644
+--- a/src/commands/info.test.ts
++++ b/src/commands/info.test.ts
+@@ -7,11 +7,16 @@ describe('infoHarness', () => {
+     expect(out).toContain('claude-code');
+     expect(out).toContain('CLAUDE.md');
+     expect(out).toContain('.claude/skills');
+   });
+ 
+   it('returns exit 1 for an unknown id, naming the valid ids', () => {
+     const result = infoHarness('bogus');
+     expect(result.exitCode).toBe(1);
+     expect(result.output).toContain('bogus');
+   });
++
++  it('surfaces a status line', () => {
++    const out = formatInfo('codex', '0.150.0');
++    expect(out).toContain('status: verified');
++  });
+ });
+diff --git a/src/commands/info.ts b/src/commands/info.ts
+index c23231e..c124cad 100644
+--- a/src/commands/info.ts
++++ b/src/commands/info.ts
+@@ -1,32 +1,37 @@
+ import { isHarnessId, type HarnessId } from '../harnesses';
+-import { getHarnessEntry } from '../registry';
++import { getHarnessEntry, resolveHarnessStatus } from '../registry';
+ 
+-export function formatInfo(id: HarnessId): string {
++export function formatInfo(id: HarnessId, installedVersion?: string | null): string {
+   const e = getHarnessEntry(id);
+-  const lines = [`${e.displayName} (${e.id})`, `  version: ${e.verifiedVersion} (verified ${e.verifiedDate})`];
++  const status = resolveHarnessStatus(id, installedVersion ?? null).status;
++  const lines = [
++    `${e.displayName} (${e.id})`,
++    `  version: ${e.verifiedVersion} (verified ${e.verifiedDate})`,
++    `  status: ${status}`,
++  ];
+   if (e.agentsDoc.mode === 'symlink' && e.agentsDoc.symlinkPath) {
+     lines.push(`  agent doc: symlink -> ${e.agentsDoc.symlinkPath}`);
+   } else {
+     lines.push(`  agent doc: native (reads AGENTS.md)`);
+   }
+   if (e.skills.mode === 'migrate-symlink' && e.skills.symlinkPath) {
+     lines.push(`  skills: migrate-symlink -> ${e.skills.symlinkPath}`);
+   } else {
+     lines.push(`  skills: native (reads .agents/skills/)`);
+   }
+   if (e.skills.trustGate) {
+     lines.push(`  trust gate: ${e.skills.trustGate.trustCommand}`);
+     lines.push(`  trust ledger: ~/${e.skills.trustGate.configPathFromHome}`);
+   }
+   return lines.join('\n');
+ }
+ 
+-export function infoHarness(id: string): { output: string; exitCode: number } {
++export function infoHarness(id: string, installedVersion?: string | null): { output: string; exitCode: number } {
+   if (!isHarnessId(id)) {
+     return {
+-      output: `harness-hub info: unrecognized harness id "${id}" (valid: claude-code, cursor, opencode, codex, hermes, pi, deepseek)`,
++      output: `harness-hub info: unrecognized harness id "${id}" (valid: claude-code, cursor, cursor-cli, opencode, codex, hermes, pi, deepseek)`,
+       exitCode: 1,
+     };
+   }
+-  return { output: formatInfo(id), exitCode: 0 };
++  return { output: formatInfo(id, installedVersion), exitCode: 0 };
+ }
+diff --git a/src/commands/list.test.ts b/src/commands/list.test.ts
+index 5aa8c40..3f72f08 100644
+--- a/src/commands/list.test.ts
++++ b/src/commands/list.test.ts
+@@ -1,34 +1,44 @@
+ import { describe, it, expect } from 'vitest';
+-import { ALL_HARNESS_IDS } from '../harnesses';
++import { ALL_HARNESS_IDS, type HarnessId } from '../harnesses';
++import { getHarnessEntry } from '../registry';
+ import { formatList } from './list';
+ 
++const none = Object.fromEntries(ALL_HARNESS_IDS.map((id) => [id, null])) as Record<HarnessId, string | null>;
++
+ describe('formatList', () => {
+   it('names every harness id', () => {
+-    const out = formatList();
++    const out = formatList(none);
+     for (const id of ALL_HARNESS_IDS) expect(out).toContain(id);
+   });
+ 
+   it('shows each harness version', () => {
+-    const out = formatList();
+-    expect(out).toContain('2.1.272'); // claude-code
+-    expect(out).toContain('1.18.31'); // opencode
++    const out = formatList(none);
++    // Derived from the registry so the test cannot drift from config again.
++    expect(out).toContain(getHarnessEntry('claude-code').verifiedVersion); // 2.0.0
++    expect(out).toContain(getHarnessEntry('opencode').verifiedVersion); // 1.0.0
+   });
+ 
+   it('is sorted by harness id', () => {
+-    const out = formatList();
++    const out = formatList(none);
+     const expected = [...ALL_HARNESS_IDS].sort();
+     const positions = expected.map((id) => out.indexOf(id));
+     expect([...positions].sort((a, b) => a - b)).toEqual(positions);
+   });
+ 
+   it('shows the trust-gate command for hermes and a dash for others', () => {
+-    const out = formatList();
++    const out = formatList(none);
+     expect(out).toContain('hermes skills trust');
+     // The header must carry the column and non-gated rows show '-'.
+     expect(out).toContain('TRUST GATE');
+     const hermesLine = out.split('\n').find((line) => line.trimStart().startsWith('hermes'));
+     expect(hermesLine).toContain('hermes skills trust');
+     const cursorLine = out.split('\n').find((line) => line.trimStart().startsWith('cursor'));
+     expect(cursorLine).toContain('-');
+   });
++
++  it('shows a STATUS column and marks an uninstalled harness unrecognized', () => {
++    const out = formatList(none);
++    expect(out).toContain('STATUS');
++    expect(out).toContain('unrecognized');
++  });
+ });
+diff --git a/src/commands/list.ts b/src/commands/list.ts
+index 5afabbf..5d1924b 100644
+--- a/src/commands/list.ts
++++ b/src/commands/list.ts
+@@ -1,26 +1,29 @@
+-import { ALL_HARNESS_IDS } from '../harnesses';
++import { ALL_HARNESS_IDS, type HarnessId } from '../harnesses';
+ import { getHarnessEntry } from '../registry';
++import { resolveHarnessStatus } from '../registry';
+ 
+ function pad(value: string, width: number): string {
+   return value.length >= width ? value : value + ' '.repeat(width - value.length);
+ }
+ 
+-export function formatList(): string {
++export function formatList(installed: Record<HarnessId, string | null>): string {
+   const rows = [...ALL_HARNESS_IDS].sort().map((id) => {
+     const e = getHarnessEntry(id);
+     const skills = e.skills.mode === 'migrate-symlink' ? 'migrate-symlink' : e.skills.mode;
+     const trustGate = e.skills.trustGate ? e.skills.trustGate.trustCommand : '-';
++    const status = resolveHarnessStatus(id, installed[id]).status;
+     return [
+       pad(e.id, 12),
+       pad(e.displayName, 18),
+       pad(e.verifiedVersion, 12),
+       pad(e.agentsDoc.mode, 12),
+       pad(skills, 12),
++      pad(status, 12),
+       trustGate,
+     ].join(' ');
+   });
+   return [
+-    `${pad('ID', 12)}${pad('NAME', 18)}${pad('VERSION', 12)}${pad('AGENT DOC', 12)}${pad('SKILLS', 12)}TRUST GATE`,
++    `${pad('ID', 12)}${pad('NAME', 18)}${pad('VERSION', 12)}${pad('AGENT DOC', 12)}${pad('SKILLS', 12)}${pad('STATUS', 12)}TRUST GATE`,
+     ...rows,
+   ].join('\n');
+ }

@@ -1,0 +1,257 @@
+# Review package: 1299b0b..HEAD
+
+## Commits
+c06c352 fix(registry): harden resolver seams and loader validation (final-review fixes)
+
+## Files changed
+ src/registry/resolve.test.ts  | 41 ++++++++++++++++++++++++++++++++++++++++-
+ src/registry/resolve.ts       | 22 ++++++++++------------
+ src/registry/versions.test.ts | 23 ++++++++++++++++++++++-
+ src/registry/versions.ts      | 11 +++++++++++
+ 4 files changed, 83 insertions(+), 14 deletions(-)
+
+## Diff
+diff --git a/src/registry/resolve.test.ts b/src/registry/resolve.test.ts
+index 09341c6..01489e3 100644
+--- a/src/registry/resolve.test.ts
++++ b/src/registry/resolve.test.ts
+@@ -1,12 +1,12 @@
+ import { describe, it, expect } from 'vitest';
+-import { resolveVersion } from './resolve';
++import { resolveVersion, resolveHarnessStatus } from './resolve';
+ import type { HarnessVersionEntry } from './versions';
+ 
+ const codex: HarnessVersionEntry = {
+   displayName: 'Codex',
+   install: { method: 'npm', package: '@openai/codex' },
+   ranges: [
+     { profile: 'native-v1', min: '0.139.0', max: '0.155.0', status: 'verified', verifiedDate: '2026-09-03' },
+     { profile: 'native-v1', min: '0.155.0', max: null, status: 'unverified' },
+   ],
+ };
+@@ -26,11 +26,50 @@ describe('resolveVersion', () => {
+   it('treats max as exclusive', () => {
+     expect(resolveVersion('codex', codex, '0.155.0').status).toBe('unverified');
+     expect(resolveVersion('codex', codex, '0.154.999').status).toBe('verified');
+   });
+ 
+   it('returns unrecognized for null, unparseable, or out-of-range versions', () => {
+     expect(resolveVersion('codex', codex, null).status).toBe('unrecognized');
+     expect(resolveVersion('codex', codex, '3.x').status).toBe('unrecognized');
+     expect(resolveVersion('codex', codex, '0.100.0').status).toBe('unrecognized');
+   });
++
++  it('returns unrecognized instead of throwing when the manifest has no entry for the id', () => {
++    // With the shipped config every harness id has an entry, so simulate a
++    // manifest-missing id by passing an undefined-cast entry.
++    const missing = undefined as unknown as HarnessVersionEntry;
++    const r = resolveVersion('codex', missing, '0.150.0');
++    expect(r).toEqual({
++      harnessId: 'codex',
++      installedVersion: '0.150.0',
++      status: 'unrecognized',
++      profile: null,
++      range: null,
++    });
++  });
++
++  it('parses version banners with a package prefix (codex npm version output)', () => {
++    // "codex-cli 0.155.1" is the real banner shape of the codex npm package.
++    const r = resolveVersion('codex', codex, 'codex-cli 0.155.1');
++    expect(r.status).toBe('unverified');
++    expect(r.range?.min).toBe('0.155.0');
++  });
++
++  it('treats bare wildcard range specs as unparseable, not coerced versions', () => {
++    expect(resolveVersion('codex', codex, '3.x').status).toBe('unrecognized');
++    expect(resolveVersion('codex', codex, '1.2.x').status).toBe('unrecognized');
++    expect(resolveVersion('codex', codex, 'v3.x').status).toBe('unrecognized');
++  });
++
++  it('still parses prerelease versions containing x-components', () => {
++    // "1.2.3-x" is a valid prerelease semver; valid() handles it and the
++    // wildcard guard must not reject it.
++    expect(resolveVersion('codex', codex, '0.150.0-beta.1').status).toBe('verified');
++  });
++
++  it('resolves through the exported resolveHarnessStatus seam', () => {
++    // Loads the real shipped manifest; codex 0.155.1 sits in the open-ended
++    // unverified range. This is the seam consumed by list/info/doctor.
++    expect(resolveHarnessStatus('codex', '0.155.1').status).toBe('unverified');
++  });
+ });
+\ No newline at end of file
+diff --git a/src/registry/resolve.ts b/src/registry/resolve.ts
+index 6d98767..c39b258 100644
+--- a/src/registry/resolve.ts
++++ b/src/registry/resolve.ts
+@@ -9,42 +9,40 @@ export interface Resolution {
+   installedVersion: string | null;
+   status: ResolvedStatus;
+   profile: string | null;
+   range: VersionRange | null;
+ }
+ 
+ function parseVersion(raw: string): string | null {
+   const cleaned = raw.trim();
+   const exact = valid(cleaned);
+   if (exact !== null) return exact;
+-  // A wildcard range like "3.x" or "1.2.x" is a range spec, not an installed
+-  // version — coerce would fabricate e.g. 3.0.0, so treat it as unparseable.
+-  if (/[xX*]/.test(cleaned)) return null;
++  // A bare wildcard range spec like "3.x", "1.2.x", or "1x" is a range spec,
++  // not an installed version — coerce would fabricate e.g. 3.0.0, so treat it
++  // as unparseable. Only this shape is rejected: version banners with prefixes
++  // ("codex-cli 0.155.1") and prerelease strings ("1.2.3-x") must still parse.
++  if (/^v?\d+(\.\d+)*(\.[xX*]|[xX*])$/.test(cleaned)) return null;
+   return coerce(cleaned)?.version ?? null;
+ }
+ 
+ function inRange(v: string, min: string, max: string | null): boolean {
+   return gte(v, min) && (max === null || lt(v, max));
+ }
+ 
+ export function resolveVersion(
+   harnessId: HarnessId,
+   entry: HarnessVersionEntry,
+   installedVersion: string | null
+ ): Resolution {
+-  if (installedVersion == null) {
+-    return { harnessId, installedVersion, status: 'unrecognized', profile: null, range: null };
+-  }
++  const unrecognized = { harnessId, installedVersion, status: 'unrecognized' as const, profile: null, range: null };
++  if (entry == null) return unrecognized;
++  if (installedVersion == null) return unrecognized;
+   const parsed = parseVersion(installedVersion);
+-  if (parsed === null) {
+-    return { harnessId, installedVersion, status: 'unrecognized', profile: null, range: null };
+-  }
++  if (parsed === null) return unrecognized;
+   const range = entry.ranges.find((r) => inRange(parsed, r.min, r.max));
+-  if (!range) {
+-    return { harnessId, installedVersion, status: 'unrecognized', profile: null, range: null };
+-  }
++  if (!range) return unrecognized;
+   return { harnessId, installedVersion, status: range.status, profile: range.profile, range };
+ }
+ 
+ export function resolveHarnessStatus(harnessId: HarnessId, installedVersion: string | null): Resolution {
+   return resolveVersion(harnessId, loadVersionsManifest()[harnessId], installedVersion);
+ }
+\ No newline at end of file
+diff --git a/src/registry/versions.test.ts b/src/registry/versions.test.ts
+index 44a4e45..5fa113d 100644
+--- a/src/registry/versions.test.ts
++++ b/src/registry/versions.test.ts
+@@ -1,14 +1,14 @@
+ // src/registry/versions.test.ts (rewrite)
+ import { describe, it, expect } from 'vitest';
+ import { ALL_HARNESS_IDS } from '../harnesses';
+-import { loadVersionsManifest } from './versions';
++import { assertValidRangeBounds, loadVersionsManifest } from './versions';
+ import { CONVENTION_PROFILES } from './profiles';
+ 
+ describe('harness versions manifest', () => {
+   it('has an entry for every recognized harness id', () => {
+     expect(Object.keys(loadVersionsManifest()).sort()).toEqual([...ALL_HARNESS_IDS].sort());
+   });
+ 
+   it('gives every harness at least one range with a known profile', () => {
+     const m = loadVersionsManifest();
+     for (const id of ALL_HARNESS_IDS) {
+@@ -27,10 +27,31 @@ describe('harness versions manifest', () => {
+     expect(m['claude-code'].install.method).toBe('npm');
+     expect(m.codex.install.method).toBe('npm');
+   });
+ 
+   it('marks cursor manual-review and cursor-cli automated-review', () => {
+     const m = loadVersionsManifest();
+     expect(m.cursor.ranges[0].review).toBe('manual');
+     expect(m['cursor-cli'].ranges[0].review).toBe('automated');
+   });
+ });
++
++describe('assertValidRangeBounds', () => {
++  const base = { profile: 'native-v1', status: 'verified' as const };
++
++  it('accepts parseable bounds (min only, and min+max)', () => {
++    expect(() => assertValidRangeBounds('codex', { ...base, min: '0.139.0', max: null })).not.toThrow();
++    expect(() => assertValidRangeBounds('codex', { ...base, min: '0.139.0', max: '0.155.0' })).not.toThrow();
++  });
++
++  it('throws on a min bound that is not valid semver', () => {
++    expect(() => assertValidRangeBounds('codex', { ...base, min: '0,155.0', max: null })).toThrow(
++      'config/config.json "codex" has a range with an invalid semver bound (min "0,155.0")'
++    );
++  });
++
++  it('throws on a max bound that is not valid semver', () => {
++    expect(() => assertValidRangeBounds('codex', { ...base, min: '0.139.0', max: '0,155.0' })).toThrow(
++      'config/config.json "codex" has a range with an invalid semver bound (max "0,155.0")'
++    );
++  });
++});
+diff --git a/src/registry/versions.ts b/src/registry/versions.ts
+index 8a0e4bd..03a2d3a 100644
+--- a/src/registry/versions.ts
++++ b/src/registry/versions.ts
+@@ -1,12 +1,13 @@
+ import { readFileSync } from 'node:fs';
+ import { join } from 'node:path';
++import { valid } from 'semver';
+ import { ALL_HARNESS_IDS, type HarnessId } from '../harnesses';
+ import { getProfile } from './profiles';
+ 
+ export interface HarnessInstallManifest {
+   method: 'npm' | 'fhs-wrapper';
+   package?: string;
+   url?: string;
+ }
+ 
+ export interface VersionRange {
+@@ -29,35 +30,45 @@ export interface HarnessVersionEntry {
+ // from src/registry under vitest; both are two levels below the repo root,
+ // where config/config.json ships (via the "files" array).
+ const MANIFEST_PATH = join(__dirname, '..', '..', 'config', 'config.json');
+ 
+ interface ManifestShape {
+   harness: { versions: Record<string, HarnessVersionEntry> };
+ }
+ 
+ let cached: Record<HarnessId, HarnessVersionEntry> | undefined;
+ 
++export function assertValidRangeBounds(id: string, r: VersionRange): void {
++  if (!valid(r.min)) {
++    throw new Error(`config/config.json "${id}" has a range with an invalid semver bound (min "${r.min}")`);
++  }
++  if (r.max !== null && !valid(r.max)) {
++    throw new Error(`config/config.json "${id}" has a range with an invalid semver bound (max "${r.max}")`);
++  }
++}
++
+ export function loadVersionsManifest(): Record<HarnessId, HarnessVersionEntry> {
+   if (cached) return cached;
+   const raw = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8')) as ManifestShape;
+   const versions = raw.harness.versions;
+   for (const id of ALL_HARNESS_IDS) {
+     if (!(id in versions)) throw new Error(`config/config.json is missing an entry for "${id}"`);
+   }
+   for (const id of ALL_HARNESS_IDS) {
+     const entry = versions[id];
+     if (!Array.isArray(entry.ranges) || entry.ranges.length === 0) {
+       throw new Error(`config/config.json "${id}" has no ranges`);
+     }
+     for (const r of entry.ranges) {
+       if (!getProfile(r.profile)) {
+         throw new Error(`config/config.json "${id}" references unknown profile "${r.profile}"`);
+       }
++      assertValidRangeBounds(id, r);
+     }
+   }
+   cached = versions as Record<HarnessId, HarnessVersionEntry>;
+   return cached;
+ }
+ 
+ export function getVersionEntry(id: HarnessId): HarnessVersionEntry {
+   return loadVersionsManifest()[id];
+ }
