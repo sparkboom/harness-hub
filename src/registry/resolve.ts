@@ -16,9 +16,11 @@ function parseVersion(raw: string): string | null {
   const cleaned = raw.trim();
   const exact = valid(cleaned);
   if (exact !== null) return exact;
-  // A wildcard range like "3.x" or "1.2.x" is a range spec, not an installed
-  // version — coerce would fabricate e.g. 3.0.0, so treat it as unparseable.
-  if (/[xX*]/.test(cleaned)) return null;
+  // A bare wildcard range spec like "3.x", "1.2.x", or "1x" is a range spec,
+  // not an installed version — coerce would fabricate e.g. 3.0.0, so treat it
+  // as unparseable. Only this shape is rejected: version banners with prefixes
+  // ("codex-cli 0.155.1") and prerelease strings ("1.2.3-x") must still parse.
+  if (/^v?\d+(\.\d+)*(\.[xX*]|[xX*])$/.test(cleaned)) return null;
   return coerce(cleaned)?.version ?? null;
 }
 
@@ -31,17 +33,13 @@ export function resolveVersion(
   entry: HarnessVersionEntry,
   installedVersion: string | null
 ): Resolution {
-  if (installedVersion == null) {
-    return { harnessId, installedVersion, status: 'unrecognized', profile: null, range: null };
-  }
+  const unrecognized = { harnessId, installedVersion, status: 'unrecognized' as const, profile: null, range: null };
+  if (entry == null) return unrecognized;
+  if (installedVersion == null) return unrecognized;
   const parsed = parseVersion(installedVersion);
-  if (parsed === null) {
-    return { harnessId, installedVersion, status: 'unrecognized', profile: null, range: null };
-  }
+  if (parsed === null) return unrecognized;
   const range = entry.ranges.find((r) => inRange(parsed, r.min, r.max));
-  if (!range) {
-    return { harnessId, installedVersion, status: 'unrecognized', profile: null, range: null };
-  }
+  if (!range) return unrecognized;
   return { harnessId, installedVersion, status: range.status, profile: range.profile, range };
 }
 

@@ -1,7 +1,7 @@
 // src/registry/versions.test.ts (rewrite)
 import { describe, it, expect } from 'vitest';
 import { ALL_HARNESS_IDS } from '../harnesses';
-import { loadVersionsManifest } from './versions';
+import { assertValidRangeBounds, loadVersionsManifest } from './versions';
 import { CONVENTION_PROFILES } from './profiles';
 
 describe('harness versions manifest', () => {
@@ -32,5 +32,26 @@ describe('harness versions manifest', () => {
     const m = loadVersionsManifest();
     expect(m.cursor.ranges[0].review).toBe('manual');
     expect(m['cursor-cli'].ranges[0].review).toBe('automated');
+  });
+});
+
+describe('assertValidRangeBounds', () => {
+  const base = { profile: 'native-v1', status: 'verified' as const };
+
+  it('accepts parseable bounds (min only, and min+max)', () => {
+    expect(() => assertValidRangeBounds('codex', { ...base, min: '0.139.0', max: null })).not.toThrow();
+    expect(() => assertValidRangeBounds('codex', { ...base, min: '0.139.0', max: '0.155.0' })).not.toThrow();
+  });
+
+  it('throws on a min bound that is not valid semver', () => {
+    expect(() => assertValidRangeBounds('codex', { ...base, min: '0,155.0', max: null })).toThrow(
+      'config/config.json "codex" has a range with an invalid semver bound (min "0,155.0")'
+    );
+  });
+
+  it('throws on a max bound that is not valid semver', () => {
+    expect(() => assertValidRangeBounds('codex', { ...base, min: '0.139.0', max: '0,155.0' })).toThrow(
+      'config/config.json "codex" has a range with an invalid semver bound (max "0,155.0")'
+    );
   });
 });

@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { valid } from 'semver';
 import { ALL_HARNESS_IDS, type HarnessId } from '../harnesses';
 import { getProfile } from './profiles';
 
@@ -36,6 +37,15 @@ interface ManifestShape {
 
 let cached: Record<HarnessId, HarnessVersionEntry> | undefined;
 
+export function assertValidRangeBounds(id: string, r: VersionRange): void {
+  if (!valid(r.min)) {
+    throw new Error(`config/config.json "${id}" has a range with an invalid semver bound (min "${r.min}")`);
+  }
+  if (r.max !== null && !valid(r.max)) {
+    throw new Error(`config/config.json "${id}" has a range with an invalid semver bound (max "${r.max}")`);
+  }
+}
+
 export function loadVersionsManifest(): Record<HarnessId, HarnessVersionEntry> {
   if (cached) return cached;
   const raw = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8')) as ManifestShape;
@@ -52,6 +62,7 @@ export function loadVersionsManifest(): Record<HarnessId, HarnessVersionEntry> {
       if (!getProfile(r.profile)) {
         throw new Error(`config/config.json "${id}" references unknown profile "${r.profile}"`);
       }
+      assertValidRangeBounds(id, r);
     }
   }
   cached = versions as Record<HarnessId, HarnessVersionEntry>;
