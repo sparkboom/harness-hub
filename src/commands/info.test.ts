@@ -14,4 +14,9 @@ describe('infoHarness', () => {
     expect(result.exitCode).toBe(1);
     expect(result.output).toContain('bogus');
   });
+
+  it('surfaces a status line', () => {
+    const out = formatInfo('codex', '0.150.0');
+    expect(out).toContain('status: verified');
+  });
 });

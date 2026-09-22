@@ -1,9 +1,14 @@
 import { isHarnessId, type HarnessId } from '../harnesses';
-import { getHarnessEntry } from '../registry';
+import { getHarnessEntry, resolveHarnessStatus } from '../registry';
 
-export function formatInfo(id: HarnessId): string {
+export function formatInfo(id: HarnessId, installedVersion?: string | null): string {
   const e = getHarnessEntry(id);
-  const lines = [`${e.displayName} (${e.id})`, `  version: ${e.verifiedVersion} (verified ${e.verifiedDate})`];
+  const status = resolveHarnessStatus(id, installedVersion ?? null).status;
+  const lines = [
+    `${e.displayName} (${e.id})`,
+    `  version: ${e.verifiedVersion} (verified ${e.verifiedDate})`,
+    `  status: ${status}`,
+  ];
   if (e.agentsDoc.mode === 'symlink' && e.agentsDoc.symlinkPath) {
     lines.push(`  agent doc: symlink -> ${e.agentsDoc.symlinkPath}`);
   } else {
@@ -21,12 +26,12 @@ export function formatInfo(id: HarnessId): string {
   return lines.join('\n');
 }
 
-export function infoHarness(id: string): { output: string; exitCode: number } {
+export function infoHarness(id: string, installedVersion?: string | null): { output: string; exitCode: number } {
   if (!isHarnessId(id)) {
     return {
-      output: `harness-hub info: unrecognized harness id "${id}" (valid: claude-code, cursor, opencode, codex, hermes, pi, deepseek)`,
+      output: `harness-hub info: unrecognized harness id "${id}" (valid: claude-code, cursor, cursor-cli, opencode, codex, hermes, pi, deepseek)`,
       exitCode: 1,
     };
   }
-  return { output: formatInfo(id), exitCode: 0 };
+  return { output: formatInfo(id, installedVersion), exitCode: 0 };
 }

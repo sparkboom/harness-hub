@@ -8,6 +8,7 @@ import { migrateHarness } from './commands/migrate';
 import { runDoctorCommand } from './commands/doctor';
 import { formatList } from './commands/list';
 import { infoHarness } from './commands/info';
+import { detectInstalledVersions } from './harnessDetect';
 import { getPackageVersion } from './version';
 
 function parseHarnessIds(values: string[]): HarnessId[] {
@@ -67,11 +68,12 @@ export async function main(argv: string[]): Promise<number> {
   });
 
   program.command('list').action(() => {
-    console.log(formatList());
+    console.log(formatList(detectInstalledVersions()));
   });
 
   program.command('info <harness>').action((harness: string) => {
-    const result = infoHarness(harness);
+    const installed = detectInstalledVersions()[harness as HarnessId] ?? null;
+    const result = infoHarness(harness, installed);
     console.log(result.output);
     exitCode = result.exitCode;
   });
