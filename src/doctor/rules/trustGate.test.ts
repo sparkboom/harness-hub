@@ -6,7 +6,7 @@ import { trustGateRule } from './trustGate';
 import type { DoctorContext } from '../types';
 
 function makeCtx(homeDir: string, repoRoot: string, pendingHarnesses: DoctorContext['pendingHarnesses'] = ['hermes']): DoctorContext {
-  return { repoRoot, homeDir, config: { status: 'absent' }, configuredHarnesses: [], pendingHarnesses };
+  return { repoRoot, homeDir, config: { status: 'absent' }, configuredHarnesses: [], pendingHarnesses, installedVersions: {} as DoctorContext['installedVersions'] };
 }
 
 describe('trustGateRule', () => {

@@ -22,6 +22,8 @@ export interface DoctorContext {
   configuredHarnesses: HarnessId[];
   /** Harnesses `enable` is currently trying to wire, not yet in configuredHarnesses (empty for a plain `doctor` run). */
   pendingHarnesses: HarnessId[];
+  /** Installed version per harness id, or null when not detected (see detectInstalledVersions). */
+  installedVersions: Record<HarnessId, string | null>;
 }
 
 export interface DoctorRule {

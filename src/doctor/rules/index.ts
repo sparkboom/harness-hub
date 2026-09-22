@@ -6,6 +6,7 @@ import { clobberRiskRule } from './clobberRisk';
 import { skillMigrationRule } from './skillMigration';
 import { trustGateRule } from './trustGate';
 import { generatedFileDriftRule } from './generatedFileDrift';
+import { versionStatusRule } from './versionStatus';
 import type { DoctorRule } from '../types';
 
 export const ALL_DOCTOR_RULES: DoctorRule[] = [
@@ -17,4 +18,5 @@ export const ALL_DOCTOR_RULES: DoctorRule[] = [
   skillMigrationRule,
   trustGateRule,
   generatedFileDriftRule,
+  versionStatusRule,
 ];

@@ -3,7 +3,7 @@ import { configValidityRule } from './configValidity';
 import type { DoctorContext } from '../types';
 
 function makeCtx(config: DoctorContext['config']): DoctorContext {
-  return { repoRoot: '/repo', homeDir: '/home/user', config, configuredHarnesses: [], pendingHarnesses: [] };
+  return { repoRoot: '/repo', homeDir: '/home/user', config, configuredHarnesses: [], pendingHarnesses: [], installedVersions: {} as DoctorContext['installedVersions'] };
 }
 
 describe('configValidityRule', () => {

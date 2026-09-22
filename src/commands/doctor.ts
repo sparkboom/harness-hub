@@ -2,6 +2,7 @@
 import { buildDoctorContext } from '../doctor/context';
 import { runDoctor } from '../doctor/run';
 import { ALL_DOCTOR_RULES } from '../doctor/rules';
+import { detectInstalledVersions } from '../harnessDetect';
 import type { Finding } from '../doctor/types';
 
 export interface DoctorCommandResult {
@@ -20,7 +21,7 @@ export function formatFindings(findings: Finding[]): string {
 }
 
 export function runDoctorCommand(repoRoot: string, homeDir?: string): DoctorCommandResult {
-  const ctx = buildDoctorContext(repoRoot, [], homeDir);
+  const ctx = buildDoctorContext(repoRoot, [], homeDir, detectInstalledVersions());
   const findings = runDoctor(ctx, ALL_DOCTOR_RULES);
   const exitCode = findings.some((f) => f.severity === 'error') ? 1 : 0;
   return { findings, output: formatFindings(findings), exitCode };
