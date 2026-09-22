@@ -31,7 +31,9 @@ export interface FileEntry {
   type: 'file' | 'symlink';
   /** File content (small repos; full text, not hashed — scenarios are tiny). */
   content?: string;
-  /** Symlink target. */
+  /** Symlink target. Stored as given when relative (link-dir-relative like
+   *  '../../x' or '/abs/target' as written in the link); snapshot() normalizes
+   *  absolute targets to be snapshot-root-relative. */
   target?: string;
 }
 

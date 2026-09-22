@@ -18,10 +18,20 @@ describe('isCoveredByVerified', () => {
 
 describe('checkLatest', () => {
   it('exits non-zero when any harness latest is outside verified ranges', async () => {
+    // Explicit fixture entries — no live config/config.json reads in tests.
+    const entries: Record<string, ManifestVersionEntry> = {
+      codex: {
+        displayName: 'Codex', install: { method: 'npm', package: '@openai/codex' },
+        ranges: [{ profile: 'native-v1', min: '0.139.0', max: '0.155.0', status: 'verified' }],
+      },
+    };
     const resolver: UpstreamResolver = { latest: async () => '0.155.1' };
-    const res = await checkLatest(resolver);
+    const res = await checkLatest(resolver, entries);
     // codex latest 0.155.1 is outside its verified range (0.139.0–0.155.0)
     expect(res.exitCode).toBe(1);
+    expect(res.rows).toEqual([
+      { id: 'codex', latest: '0.155.1', covered: false },
+    ]);
   });
 
   it('does not crash when an entry has missing or empty ranges (drift)', async () => {

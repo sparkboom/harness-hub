@@ -27,4 +27,34 @@ describe('scenario suite', () => {
   it('restricts skill-scoping to the documented harnesses', () => {
     expect(SCENARIO_SUITE['skill-scoping'].harnessCompat).toEqual(['cursor', 'cursor-cli', 'opencode']);
   });
+
+  describe('hermes-trust-gate predicate', () => {
+    const predicate = SCENARIO_SUITE['hermes-trust-gate'].predicate;
+    const mkCtx = (ledger: string) => ({
+      repoRoot: '/Users/x/proj',
+      homeDir: '/Users/x/home',
+      repo: { files: {} },
+      home: { files: { '.hermes/config.yaml': { type: 'file' as const, content: ledger } } },
+      beforeRepo: { files: {} },
+      beforeHome: { files: {} },
+    });
+
+    it('passes when the ledger contains the container mount path /repo', () => {
+      expect(predicate(mkCtx('trusted:\n  - /repo\n'))).toEqual({
+        pass: true,
+        reason: 'trust ledger gained the container mount path /repo',
+      });
+    });
+
+    it('passes when the ledger contains the repo root (human-mode case)', () => {
+      expect(predicate(mkCtx('trusted:\n  - /Users/x/proj\n'))).toEqual({
+        pass: true,
+        reason: 'trust ledger gained the repo path',
+      });
+    });
+
+    it('fails when the ledger contains neither path', () => {
+      expect(predicate(mkCtx('trusted:\n  - /elsewhere\n')).pass).toBe(false);
+    });
+  });
 });

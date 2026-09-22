@@ -37,9 +37,12 @@ function writeSetup(repoRoot: string, homeDir: string, files: SetupFile[]): void
   mkdirSync(homeDir, { recursive: true });
   for (const f of files) {
     if (f.kind === 'symlink') {
+      if (!f.symlinkTarget) {
+        throw new Error(`setup: symlink at "${f.path}" requires symlinkTarget`);
+      }
       const target = join(repoRoot, f.path);
       mkdirSync(dirname(target), { recursive: true });
-      symlinkSync(f.symlinkTarget ?? '', target);
+      symlinkSync(f.symlinkTarget, target);
     } else {
       writeAssets(repoRoot, [{ path: f.path, content: f.content ?? '' }]);
     }

@@ -151,10 +151,17 @@ export const SCENARIO_SUITE: Record<string, Scenario> = {
     predicate: (ctx) => {
       const cfg = ctx.home.files['.hermes/config.yaml'];
       if (!cfg || cfg.type !== 'file') return { pass: false, reason: '~/.hermes/config.yaml not written' };
-      const trusted = (cfg.content ?? '').includes(ctx.repoRoot);
-      return trusted
-        ? { pass: true, reason: 'trust ledger gained the repo path' }
-        : { pass: false, reason: 'repo path not found in trust ledger' };
+      // The trust ledger records the repo path as the harness saw it: the host
+      // path in human mode, or the container mount path (/repo) in
+      // container-mode runs. Accept either.
+      const content = cfg.content ?? '';
+      if (content.includes(ctx.repoRoot)) {
+        return { pass: true, reason: 'trust ledger gained the repo path' };
+      }
+      if (content.includes('/repo')) {
+        return { pass: true, reason: 'trust ledger gained the container mount path /repo' };
+      }
+      return { pass: false, reason: 'repo path not found in trust ledger' };
     },
     evidenceLevels: ['behavioral'],
   },

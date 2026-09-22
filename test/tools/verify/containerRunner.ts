@@ -18,6 +18,12 @@ export function containerRunner(exec?: DockerExecutor): Runner {
   return {
     kind: 'container',
     async run(ctx: RunContext): Promise<RunResult> {
+      // Empty prompt = deterministic scenario (e.g. skill-wiring): there is
+      // nothing for the harness to do, and dispatching `claude -p ""` produces
+      // garbage runs. Skip build/run entirely.
+      if (ctx.prompt === '') {
+        return { status: 'ok', output: 'no prompt — deterministic scenario, container dispatch skipped' };
+      }
       try {
         const workDir = mkdtempSync(join(tmpdir(), 'hh-testbed-'));
         const built = buildImage({ harness: ctx.harnessId, version: ctx.version, workDir, exec: executor });

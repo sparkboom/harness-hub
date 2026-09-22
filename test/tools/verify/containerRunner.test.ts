@@ -15,4 +15,21 @@ describe('containerRunner', () => {
     });
     expect(res.status).toBe('ok');
   });
+
+  it('skips dispatch for an empty prompt and never calls the executor', async () => {
+    let calls = 0;
+    const runner = containerRunner({
+      build: () => { calls += 1; return { status: 'ok', output: '' }; },
+      run: () => { calls += 1; return { status: 'ok', output: 'done' }; },
+    });
+    const res = await runner.run({
+      harnessId: 'codex', version: '0.155.1',
+      repoRoot: '/tmp/repo', homeDir: '/tmp/home', prompt: '',
+    });
+    expect(res).toEqual({
+      status: 'ok',
+      output: 'no prompt — deterministic scenario, container dispatch skipped',
+    });
+    expect(calls).toBe(0);
+  });
 });
