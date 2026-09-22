@@ -3,7 +3,7 @@ import { join } from 'node:path';
 
 export interface HarnessManifestEntry {
   displayName: string;
-  version: string;
+  verifiedVersion?: string;
   verifiedDate: string;
   install: { method: string; package?: string; url?: string };
 }

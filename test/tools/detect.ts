@@ -65,7 +65,7 @@ export function detectWith(runner: VersionRunner = runVersion): DetectRow[] {
       return {
         id,
         displayName: manifest[id].displayName,
-        pin: manifest[id].version,
+        pin: manifest[id].verifiedVersion ?? 'unpinned',
         installed,
       };
     });
