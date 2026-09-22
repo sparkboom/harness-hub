@@ -1,0 +1,14 @@
+{
+  "name": "harness-hub-env-playground",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "generate": "node ../../tools/generate.mjs",
+    "scenario": "node ../../tools/generate.mjs",
+    "detect": "node ../../tools/detect.mjs",
+    "probe": "node ../../tools/probe.mjs",
+    "env": "node ../../tools/env.mjs",
+    "reset": "git clean -fdX .",
+    "shell": "nix develop --flake ../../"
+  }
+}

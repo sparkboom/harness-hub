@@ -1,0 +1,280 @@
+# Review package: a5e1710..9ab5c62
+
+## Commits
+9ab5c62 feat: add harness-versions.json manifest as single source of truth
+
+## Files changed
+ .gitignore                    |  2 ++
+ harness-versions.json         | 44 ++++++++++++++++++++++++++++++++++++++++++
+ package.json                  |  2 +-
+ src/registry/data.ts          | 45 +++++++++++++++++++++++--------------------
+ src/registry/versions.test.ts | 40 ++++++++++++++++++++++++++++++++++++++
+ src/registry/versions.ts      | 29 ++++++++++++++++++++++++++++
+ 6 files changed, 140 insertions(+), 22 deletions(-)
+
+## Diff
+diff --git a/.gitignore b/.gitignore
+index 13286e1..02012dc 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1,3 +1,5 @@
+ .cursor
+ dist/
+ node_modules/
++playground/
++tools/dist/
+diff --git a/harness-versions.json b/harness-versions.json
+new file mode 100644
+index 0000000..139cefc
+--- /dev/null
++++ b/harness-versions.json
+@@ -0,0 +1,44 @@
++{
++  "claude-code": {
++    "displayName": "Claude Code",
++    "version": "2.1.272",
++    "verifiedDate": "2026-09-15",
++    "install": { "method": "npm", "package": "@anthropic-ai/claude-code" }
++  },
++  "cursor": {
++    "displayName": "Cursor",
++    "version": "3.x",
++    "verifiedDate": "2026-09-10",
++    "install": { "method": "fhs-wrapper", "url": "https://cursor.com/install" }
++  },
++  "opencode": {
++    "displayName": "OpenCode",
++    "version": "1.18.31",
++    "verifiedDate": "2026-09-14",
++    "install": { "method": "npm", "package": "opencode-ai" }
++  },
++  "codex": {
++    "displayName": "Codex",
++    "version": "0.153.2",
++    "verifiedDate": "2026-09-03",
++    "install": { "method": "npm", "package": "@openai/codex" }
++  },
++  "hermes": {
++    "displayName": "Hermes",
++    "version": "0.21.2",
++    "verifiedDate": "2026-09-11",
++    "install": { "method": "npm", "package": "hermes-agent" }
++  },
++  "pi": {
++    "displayName": "Pi",
++    "version": "0.85.0",
++    "verifiedDate": "2026-09-04",
++    "install": { "method": "npm", "package": "@mariozechner/pi-coding-agent" }
++  },
++  "deepseek": {
++    "displayName": "DeepSeek Harness",
++    "version": "0.1.5-rc.1",
++    "verifiedDate": "2026-09-10",
++    "install": { "method": "npm", "package": "@deepseek-ai/dsh" }
++  }
++}
+diff --git a/package.json b/package.json
+index e9a6577..3fd530d 100644
+--- a/package.json
++++ b/package.json
+@@ -2,21 +2,21 @@
+   "name": "harness-hub",
+   "version": "0.1.0",
+   "description": "Make a repo harness-agnostic: wire AGENTS.md and .agents/skills/ into whichever coding harnesses you enable.",
+   "license": "MIT",
+   "bin": {
+     "harness-hub": "dist/bin.js"
+   },
+   "engines": {
+     "node": ">=22.12.0"
+   },
+-  "files": ["dist"],
++  "files": ["dist", "harness-versions.json"],
+   "scripts": {
+     "build": "tsc -p tsconfig.json",
+     "test": "vitest run",
+     "test:watch": "vitest",
+     "typecheck": "tsc -p tsconfig.json --noEmit"
+   },
+   "dependencies": {
+     "commander": "^15.0.0",
+     "gray-matter": "^4.0.3",
+     "yaml": "^2.9.1"
+diff --git a/src/registry/data.ts b/src/registry/data.ts
+index 06194a1..d1f5e6b 100644
+--- a/src/registry/data.ts
++++ b/src/registry/data.ts
+@@ -1,68 +1,71 @@
+ import type { HarnessId } from '../harnesses';
+ import type { HarnessEntry } from './types';
++import { loadVersionsManifest } from './versions';
++
++const versions = loadVersionsManifest();
+ 
+ export const HARNESS_REGISTRY: Record<HarnessId, HarnessEntry> = {
+   'claude-code': {
+     id: 'claude-code',
+-    displayName: 'Claude Code',
+-    verifiedVersion: 'unpinned', // opaque native binary — not version-pinned in harness-versions.insight.md
+-    verifiedDate: '2026-09-20',
++    displayName: versions['claude-code'].displayName,
++    verifiedVersion: versions['claude-code'].version,
++    verifiedDate: versions['claude-code'].verifiedDate,
+     agentsDoc: { mode: 'symlink', symlinkPath: 'CLAUDE.md' },
+     skills: { mode: 'migrate-symlink', symlinkPath: '.claude/skills' },
+   },
+   cursor: {
+     id: 'cursor',
+-    displayName: 'Cursor',
+-    verifiedVersion: '3.x',
+-    verifiedDate: '2026-09-10',
++    displayName: versions.cursor.displayName,
++    verifiedVersion: versions.cursor.version,
++    verifiedDate: versions.cursor.verifiedDate,
+     agentsDoc: { mode: 'native' },
+     skills: { mode: 'native' },
+   },
+   opencode: {
+     id: 'opencode',
+-    displayName: 'OpenCode',
+-    verifiedVersion: '1.18.31',
+-    verifiedDate: '2026-09-14',
++    displayName: versions.opencode.displayName,
++    verifiedVersion: versions.opencode.version,
++    verifiedDate: versions.opencode.verifiedDate,
+     agentsDoc: { mode: 'native' },
+     skills: { mode: 'native' },
+   },
+   codex: {
+     id: 'codex',
+-    displayName: 'Codex',
+-    verifiedVersion: '0.153.2',
+-    verifiedDate: '2026-09-03',
++    displayName: versions.codex.displayName,
++    verifiedVersion: versions.codex.version,
++    verifiedDate: versions.codex.verifiedDate,
+     agentsDoc: { mode: 'native' },
+     skills: { mode: 'native' },
+   },
+   hermes: {
+     id: 'hermes',
+-    displayName: 'Hermes',
+-    verifiedVersion: '0.21.2',
+-    verifiedDate: '2026-09-11',
++    displayName: versions.hermes.displayName,
++    verifiedVersion: versions.hermes.version,
++    verifiedDate: versions.hermes.verifiedDate,
+     agentsDoc: { mode: 'native' },
+     skills: {
+       mode: 'native',
+       trustGate: {
+         configPathFromHome: '.hermes/config.yaml',
+         trustedDirsKeyPath: ['skills', 'trusted_project_dirs'],
+         trustCommand: 'hermes skills trust',
+       },
+     },
+   },
+   pi: {
+     id: 'pi',
+-    displayName: 'Pi',
+-    verifiedVersion: '0.85.0',
+-    verifiedDate: '2026-09-04',
++    displayName: versions.pi.displayName,
++    verifiedVersion: versions.pi.version,
++    verifiedDate: versions.pi.verifiedDate,
+     agentsDoc: { mode: 'native' },
+     skills: { mode: 'native' },
+   },
+   deepseek: {
+     id: 'deepseek',
+-    displayName: 'DeepSeek Harness',
+-    verifiedVersion: '0.1.5-rc.1',
+-    verifiedDate: '2026-09-10',
++    displayName: versions.deepseek.displayName,
++    verifiedVersion: versions.deepseek.version,
++    verifiedDate: versions.deepseek.verifiedDate,
+     agentsDoc: { mode: 'native' },
+     skills: { mode: 'native' },
+   },
+ };
+diff --git a/src/registry/versions.test.ts b/src/registry/versions.test.ts
+new file mode 100644
+index 0000000..aa821ff
+--- /dev/null
++++ b/src/registry/versions.test.ts
+@@ -0,0 +1,40 @@
++import { describe, it, expect } from 'vitest';
++import { ALL_HARNESS_IDS } from '../harnesses';
++import { loadVersionsManifest } from './versions';
++import { getHarnessEntry } from './index';
++
++describe('harness versions manifest', () => {
++  it('has an entry for every recognized harness id', () => {
++    const manifest = loadVersionsManifest();
++    expect(Object.keys(manifest).sort()).toEqual([...ALL_HARNESS_IDS].sort());
++  });
++
++  it('registers each harness version as a non-empty string', () => {
++    const manifest = loadVersionsManifest();
++    for (const id of ALL_HARNESS_IDS) {
++      expect(manifest[id].version).toBeTruthy();
++      expect(manifest[id].verifiedDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
++    }
++  });
++
++  it('derives the registry verifiedVersion from the manifest (no drift)', () => {
++    const manifest = loadVersionsManifest();
++    for (const id of ALL_HARNESS_IDS) {
++      expect(getHarnessEntry(id).verifiedVersion).toBe(manifest[id].version);
++      expect(getHarnessEntry(id).verifiedDate).toBe(manifest[id].verifiedDate);
++    }
++  });
++
++  it('pins claude-code to the researched 2.1.272 (not "unpinned")', () => {
++    expect(loadVersionsManifest()['claude-code'].version).toBe('2.1.272');
++  });
++
++  it('marks cursor install as fhs-wrapper and every other harness as npm', () => {
++    const m = loadVersionsManifest();
++    expect(m.cursor.install.method).toBe('fhs-wrapper');
++    for (const id of ALL_HARNESS_IDS) {
++      if (id === 'cursor') continue;
++      expect(m[id].install.method).toBe('npm');
++    }
++  });
++});
+diff --git a/src/registry/versions.ts b/src/registry/versions.ts
+new file mode 100644
+index 0000000..66279ff
+--- /dev/null
++++ b/src/registry/versions.ts
+@@ -0,0 +1,29 @@
++import { readFileSync } from 'node:fs';
++import { join } from 'node:path';
++import { ALL_HARNESS_IDS, type HarnessId } from '../harnesses';
++
++export interface HarnessInstallManifest {
++  method: 'npm' | 'fhs-wrapper';
++  package?: string;
++  url?: string;
++}
++
++export interface HarnessVersionEntry {
++  displayName: string;
++  version: string;
++  verifiedDate: string;
++  install: HarnessInstallManifest;
++}
++
++// Compiled to dist/registry/versions.js, so __dirname is dist/registry and the
++// manifest is two levels up at the repo root (and ships in the npm package via
++// the "files" array).
++const MANIFEST_PATH = join(__dirname, '..', '..', 'harness-versions.json');
++
++export function loadVersionsManifest(): Record<HarnessId, HarnessVersionEntry> {
++  const raw = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8')) as Record<string, HarnessVersionEntry>;
++  for (const id of ALL_HARNESS_IDS) {
++    if (!(id in raw)) throw new Error(`harness-versions.json is missing an entry for "${id}"`);
++  }
++  return raw as Record<HarnessId, HarnessVersionEntry>;
++}

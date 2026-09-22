@@ -92,7 +92,7 @@ describe('enableHarnesses', () => {
     writeFileSync(join(repoRoot, 'CLAUDE.md'), '# hand-written\n');
     const result = enableHarnesses(repoRoot, ['claude-code']);
     expect(result.results[0].status).toBe('blocked');
-    expect(result.results[0].blockingFindings[0].ruleId).toBe('clobber-risk');
+    expect(result.results[0].blockingFindings[0].ruleId).toBe('claude-md-clobber');
   });
 
   it('overwrites a hand-written CLAUDE.md with --force', () => {
@@ -153,7 +153,7 @@ describe('enableHarnesses', () => {
     writeFileSync(join(repoRoot, 'CLAUDE.md'), '# hand-written\n');
     const result = enableHarnesses(repoRoot, ['claude-code']);
     expect(result.results[0].status).toBe('blocked');
-    expect(result.results[0].blockingFindings[0].ruleId).toBe('clobber-risk');
+    expect(result.results[0].blockingFindings[0].ruleId).toBe('claude-md-clobber');
     expect(readFileSync(join(repoRoot, 'CLAUDE.md'), 'utf8')).toBe('# hand-written\n');
   });
 

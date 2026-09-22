@@ -19,16 +19,19 @@ describe('configValidityRule', () => {
   it('flags unknown harness ids in an otherwise-valid config', () => {
     const ctx = makeCtx({ status: 'ok', format: 'yaml', path: '/repo/harness-hub.yaml', harnesses: [], unknownIds: ['bogus'] });
     expect(configValidityRule.check(ctx)[0].severity).toBe('error');
+    expect(configValidityRule.check(ctx)[0].ruleId).toBe('config-unknown-harness-id');
   });
 
   it('flags ambiguous config (both files present)', () => {
     const ctx = makeCtx({ status: 'ambiguous', yamlPath: '/repo/harness-hub.yaml', jsonPath: '/repo/harness-hub.json' });
     expect(configValidityRule.check(ctx)[0].severity).toBe('error');
+    expect(configValidityRule.check(ctx)[0].ruleId).toBe('config-ambiguous');
   });
 
   it('flags a parse error', () => {
     const ctx = makeCtx({ status: 'parse-error', format: 'yaml', path: '/repo/harness-hub.yaml', error: 'bad yaml' });
     expect(configValidityRule.check(ctx)[0].message).toContain('bad yaml');
+    expect(configValidityRule.check(ctx)[0].ruleId).toBe('config-parse-error');
   });
 
   it('flags an invalid shape', () => {
@@ -39,5 +42,6 @@ describe('configValidityRule', () => {
       reason: '"harnesses" must be an array',
     });
     expect(configValidityRule.check(ctx)[0].severity).toBe('error');
+    expect(configValidityRule.check(ctx)[0].ruleId).toBe('config-invalid-shape');
   });
 });

@@ -1,0 +1,16 @@
+{
+  "name": "harness-hub-test-environment",
+  "version": "0.1.0",
+  "description": "Test environment for harness-hub development and integration testing",
+  "private": true,
+  "scripts": {
+    "create": "node tools/env.mjs create",
+    "init": "node tools/env.mjs create",
+    "remove": "node tools/env.mjs rm",
+    "list": "node tools/env.mjs ls",
+    "shell": "node tools/env.mjs shell",
+    "generate": "node tools/env.mjs generate",
+    "detect": "node tools/detect.mjs",
+    "probe": "node tools/probe.mjs"
+  }
+}

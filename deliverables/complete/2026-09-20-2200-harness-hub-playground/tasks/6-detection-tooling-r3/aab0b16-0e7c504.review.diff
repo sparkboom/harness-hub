@@ -1,0 +1,196 @@
+# Review package: aab0b16..0e7c504
+
+## Commits
+0e7c504 feat: add harness detection tooling
+
+## Files changed
+ tools/detect.mjs     | 17 ++++++++++
+ tools/detect.test.ts | 26 +++++++++++++++
+ tools/detect.ts      | 89 ++++++++++++++++++++++++++++++++++++++++++++++++++++
+ tools/manifest.ts    | 27 ++++++++++++++++
+ 4 files changed, 159 insertions(+)
+
+## Diff
+diff --git a/tools/detect.mjs b/tools/detect.mjs
+new file mode 100644
+index 0000000..c80b5a5
+--- /dev/null
++++ b/tools/detect.mjs
+@@ -0,0 +1,17 @@
++import { createRequire } from 'node:module';
++import { existsSync } from 'node:fs';
++import { fileURLToPath } from 'node:url';
++import { dirname, join } from 'node:path';
++
++const here = dirname(fileURLToPath(import.meta.url));
++const entry = join(here, 'dist', 'detect.js');
++if (!existsSync(entry)) {
++  console.error('tools not built — run: npm run build:tools');
++  process.exit(1);
++}
++const require = createRequire(import.meta.url);
++const { main } = require(entry);
++main(process.argv.slice(2)).then((code) => process.exit(code), (err) => {
++  console.error(err instanceof Error ? err.message : String(err));
++  process.exit(1);
++});
+diff --git a/tools/detect.test.ts b/tools/detect.test.ts
+new file mode 100644
+index 0000000..fd8f2ed
+--- /dev/null
++++ b/tools/detect.test.ts
+@@ -0,0 +1,26 @@
++import { describe, it, expect } from 'vitest';
++import { formatDetect } from './detect';
++import { detectWith } from './detect';
++
++describe('detect', () => {
++  it('reports a missing harness with null installed', () => {
++    const rows = detectWith(() => null);
++    const cursor = rows.find((r) => r.id === 'cursor')!;
++    expect(cursor.installed).toBeNull();
++    expect(cursor.pin).toBe('3.x');
++  });
++
++  it('reports an installed harness version', () => {
++    const rows = detectWith((id) => (id === 'opencode' ? '1.16.2\n' : null));
++    expect(rows.find((r) => r.id === 'opencode')!.installed).toBe('1.16.2');
++    expect(rows.find((r) => r.id === 'claude-code')!.installed).toBeNull();
++  });
++
++  it('formats every harness id and its pin', () => {
++    const rows = detectWith(() => null);
++    const out = formatDetect(rows);
++    expect(out).toContain('claude-code');
++    expect(out).toContain('2.1.272');
++    expect(out).toContain('NOT INSTALLED');
++  });
++});
+diff --git a/tools/detect.ts b/tools/detect.ts
+new file mode 100644
+index 0000000..155a285
+--- /dev/null
++++ b/tools/detect.ts
+@@ -0,0 +1,89 @@
++import { spawnSync } from 'node:child_process';
++import { existsSync } from 'node:fs';
++import { homedir } from 'node:os';
++import { join } from 'node:path';
++import { loadManifest } from './manifest';
++
++export interface DetectRow {
++  id: string;
++  displayName: string;
++  pin: string;
++  installed: string | null;
++}
++
++// Detection targets the harness *binary*, not any same-name editor binary.
++// Cursor is the headless `agent` CLI, NOT the `cursor` IDE (spec R3).
++const BINARY_CANDIDATES: Record<string, string[]> = {
++  'claude-code': ['claude'],
++  cursor: ['agent', join(homedir(), '.cursor', 'bin', 'agent')],
++  opencode: ['opencode'],
++  codex: ['codex'],
++  hermes: ['hermes'],
++  pi: ['pi'],
++  deepseek: ['dsh'],
++};
++
++function which(bin: string): string | null {
++  const r = spawnSync('sh', ['-c', `command -v "${bin}"`], { encoding: 'utf8' });
++  return r.status === 0 && r.stdout.trim() ? r.stdout.trim() : null;
++}
++
++export function resolveBinary(id: string): string | null {
++  for (const cand of BINARY_CANDIDATES[id] ?? []) {
++    if (cand.includes(homedir())) {
++      if (existsSync(cand)) return cand;
++    } else {
++      const found = which(cand);
++      if (found) return found;
++    }
++  }
++  return null;
++}
++
++export type VersionRunner = (id: string) => string | null;
++
++export function runVersion(id: string): string | null {
++  const bin = resolveBinary(id);
++  if (!bin) return null;
++  const r = spawnSync(bin, ['--version'], { encoding: 'utf8', timeout: 15000 });
++  if (r.error || r.status !== 0) return null;
++  const firstLine = (r.stdout ?? '').split('\n')[0].trim();
++  return firstLine || null;
++}
++
++export function detectWith(runner: VersionRunner = runVersion): DetectRow[] {
++  const manifest = loadManifest();
++  return Object.keys(manifest)
++    .sort()
++    .map((id) => {
++      // Normalize injected-runner output to runVersion's contract: trimmed,
++      // non-empty, else null (runVersion already trims its own result).
++      const v = runner(id);
++      const installed = v === null ? null : v.trim() || null;
++      return {
++        id,
++        displayName: manifest[id].displayName,
++        pin: manifest[id].version,
++        installed,
++      };
++    });
++}
++
++export function detectInstalled(): DetectRow[] {
++  return detectWith(runVersion);
++}
++
++export function formatDetect(rows: DetectRow[]): string {
++  const header = ['ID', 'NAME', 'PIN', 'INSTALLED'];
++  const pad = (v: string, w: number) => (v.length >= w ? v : v + ' '.repeat(w - v.length));
++  const lines = [header.map((h, i) => pad(h, [14, 18, 14, 40][i])).join('')];
++  for (const r of rows) {
++    lines.push([pad(r.id, 14), pad(r.displayName, 18), pad(r.pin, 14), r.installed ?? 'NOT INSTALLED'].join(''));
++  }
++  return lines.join('\n');
++}
++
++export async function main(_argv: string[]): Promise<number> {
++  console.log(formatDetect(detectInstalled()));
++  return 0;
++}
+diff --git a/tools/manifest.ts b/tools/manifest.ts
+new file mode 100644
+index 0000000..671283e
+--- /dev/null
++++ b/tools/manifest.ts
+@@ -0,0 +1,27 @@
++import { existsSync, readFileSync } from 'node:fs';
++import { join } from 'node:path';
++
++export interface HarnessManifestEntry {
++  displayName: string;
++  version: string;
++  verifiedDate: string;
++  install: { method: string; package?: string; url?: string };
++}
++
++// tools/ code runs from two layouts: source under vitest (__dirname =
++// <repo>/tools) and compiled via build:tools (__dirname = <repo>/tools/dist).
++// The manifest sits at the package root, so probe the candidates in order and
++// use the first that exists (src/registry/versions.ts has the same two-up join
++// and works in both layouts only because both of its dirs are two levels deep).
++const MANIFEST_CANDIDATES = [
++  join(__dirname, 'harness-versions.json'),
++  join(__dirname, '..', 'harness-versions.json'),
++  join(__dirname, '..', '..', 'harness-versions.json'),
++];
++
++const MANIFEST_PATH =
++  MANIFEST_CANDIDATES.find((p) => existsSync(p)) ?? MANIFEST_CANDIDATES[MANIFEST_CANDIDATES.length - 1];
++
++export function loadManifest(): Record<string, HarnessManifestEntry> {
++  return JSON.parse(readFileSync(MANIFEST_PATH, 'utf8')) as Record<string, HarnessManifestEntry>;
++}

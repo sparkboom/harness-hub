@@ -29,8 +29,9 @@ function ensureSymlink(repoRoot: string, linkRelPath: string, targetAbsPath: str
 
 /**
  * Wires a harness's AGENTS.md symlink and/or skills symlink per its registry
- * entry. Assumes doctor's blocking checks (clobber-risk, unmigrated-skills,
- * skill-migration-collision) already passed for this harness.
+ * entry. Assumes doctor's blocking checks (claude-md-clobber,
+ * claude-skills-clobber, unmigrated-skills, skill-migration-collision)
+ * already passed for this harness.
  */
 export function wireMigrateSymlinkHarness(repoRoot: string, entry: HarnessEntry): void {
   if (entry.skills.mode === 'migrate-symlink' && entry.skills.symlinkPath) {

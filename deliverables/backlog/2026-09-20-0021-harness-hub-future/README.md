@@ -2,7 +2,7 @@
 
 This folder consolidates everything from the original, broader harness-hub
 design pass that is **not** part of the
-[`harness-hub-mvp`](../2026-09-20-0021-harness-hub-mvp/harness-hub-mvp.spec.md)
+[`harness-hub-mvp`](../../complete/2026-09-20-0021-harness-hub-mvp/harness-hub-mvp.spec.md)
 deliverable. It's a reference shelf, not an active spec — each subfolder
 keeps its original name and internal structure so its existing cross-links
 still resolve.

@@ -1,0 +1,159 @@
+# Review package: d77361c..08e6247
+
+## Commits
+08e6247 feat: add harness probe tooling
+
+## Files changed
+ tools/detect.ts     |  4 +++-
+ tools/probe.mjs     | 17 +++++++++++++++
+ tools/probe.test.ts | 23 +++++++++++++++++++++
+ tools/probe.ts      | 59 +++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 4 files changed, 102 insertions(+), 1 deletion(-)
+
+## Diff
+diff --git a/tools/detect.ts b/tools/detect.ts
+index 155a285..b76d7d5 100644
+--- a/tools/detect.ts
++++ b/tools/detect.ts
+@@ -8,21 +8,23 @@ export interface DetectRow {
+   id: string;
+   displayName: string;
+   pin: string;
+   installed: string | null;
+ }
+ 
+ // Detection targets the harness *binary*, not any same-name editor binary.
+ // Cursor is the headless `agent` CLI, NOT the `cursor` IDE (spec R3).
+ const BINARY_CANDIDATES: Record<string, string[]> = {
+   'claude-code': ['claude'],
+-  cursor: ['agent', join(homedir(), '.cursor', 'bin', 'agent')],
++  // The standalone cursor-agent CLI installs itself at ~/.local/bin/agent,
++  // which is frequently not on non-interactive PATHs.
++  cursor: ['agent', join(homedir(), '.cursor', 'bin', 'agent'), join(homedir(), '.local', 'bin', 'agent')],
+   opencode: ['opencode'],
+   codex: ['codex'],
+   hermes: ['hermes'],
+   pi: ['pi'],
+   deepseek: ['dsh'],
+ };
+ 
+ function which(bin: string): string | null {
+   const r = spawnSync('sh', ['-c', `command -v "${bin}"`], { encoding: 'utf8' });
+   return r.status === 0 && r.stdout.trim() ? r.stdout.trim() : null;
+diff --git a/tools/probe.mjs b/tools/probe.mjs
+new file mode 100644
+index 0000000..4bfc0c6
+--- /dev/null
++++ b/tools/probe.mjs
+@@ -0,0 +1,17 @@
++import { createRequire } from 'node:module';
++import { existsSync } from 'node:fs';
++import { fileURLToPath } from 'node:url';
++import { dirname, join } from 'node:path';
++
++const here = dirname(fileURLToPath(import.meta.url));
++const entry = join(here, 'dist', 'probe.js');
++if (!existsSync(entry)) {
++  console.error('tools not built — run: npm run build:tools');
++  process.exit(1);
++}
++const require = createRequire(import.meta.url);
++const { main } = require(entry);
++main(process.argv.slice(2)).then((code) => process.exit(code), (err) => {
++  console.error(err instanceof Error ? err.message : String(err));
++  process.exit(1);
++});
+diff --git a/tools/probe.test.ts b/tools/probe.test.ts
+new file mode 100644
+index 0000000..2988d8c
+--- /dev/null
++++ b/tools/probe.test.ts
+@@ -0,0 +1,23 @@
++import { describe, it, expect } from 'vitest';
++import { probeHarness, PROBE_COMMANDS } from './probe';
++
++describe('probe', () => {
++  it('skips a missing harness with a clear message', () => {
++    const result = probeHarness('codex', '/repo', () => { throw new Error('not installed'); });
++    expect(result.exitCode).toBe(1);
++    expect(result.output).toContain('not installed');
++  });
++
++  it('has a probe command for every harness id', () => {
++    for (const id of ['claude-code', 'cursor', 'opencode', 'codex', 'hermes', 'pi', 'deepseek']) {
++      expect(PROBE_COMMANDS[id]).toBeDefined();
++    }
++  });
++
++  it('runs the headless agent form for cursor with --workspace', () => {
++    let captured: string[] = [];
++    probeHarness('cursor', '/repo', (spec) => { captured = spec.args; return ''; });
++    expect(captured).toContain('--workspace');
++    expect(captured).toContain('/repo');
++  });
++});
+diff --git a/tools/probe.ts b/tools/probe.ts
+new file mode 100644
+index 0000000..aedb91e
+--- /dev/null
++++ b/tools/probe.ts
+@@ -0,0 +1,59 @@
++import { spawnSync } from 'node:child_process';
++import { resolveBinary } from './detect';
++
++export interface ProbeSpec {
++  cmd: string;
++  args: string[];
++}
++
++// First-cut headless invocations. The four well-documented harnesses use their
++// scripted modes; hermes/pi/deepseek use their most likely `run`/`-p` forms
++// and are confirmed by running this tool itself (spec R4 — probe is the
++// verification aid).
++export const PROBE_COMMANDS: Record<string, (repoRoot: string) => ProbeSpec> = {
++  'claude-code': () => ({ cmd: 'claude', args: ['-p', 'List the skills available in this repo and summarize AGENTS.md.'] }),
++  cursor: (root) => ({ cmd: 'agent', args: ['-p', 'List your skills and summarize AGENTS.md.', '--mode', 'ask', '--trust', '--workspace', root] }),
++  opencode: () => ({ cmd: 'opencode', args: ['run', 'List the skills available in this repo and summarize AGENTS.md.'] }),
++  codex: () => ({ cmd: 'codex', args: ['exec', 'List the skills available in this repo and summarize AGENTS.md.'] }),
++  hermes: () => ({ cmd: 'hermes', args: ['run', 'List the skills available in this repo and summarize AGENTS.md.'] }),
++  pi: () => ({ cmd: 'pi', args: ['-p', 'List the skills available in this repo and summarize AGENTS.md.'] }),
++  deepseek: () => ({ cmd: 'dsh', args: ['run', 'List the skills available in this repo and summarize AGENTS.md.'] }),
++};
++
++export type ProbeRunner = (spec: ProbeSpec) => string;
++
++function defaultRunner(spec: ProbeSpec): string {
++  const r = spawnSync(spec.cmd, spec.args, { encoding: 'utf8', stdio: 'inherit', timeout: 120000 });
++  return r.error ? r.error.message : '';
++}
++
++export function probeHarness(
++  id: string,
++  repoRoot: string,
++  run: ProbeRunner = defaultRunner
++): { exitCode: number; output: string } {
++  const make = PROBE_COMMANDS[id];
++  if (!make) {
++    return { exitCode: 1, output: `probe: unrecognized harness id "${id}".` };
++  }
++  const binary = resolveBinary(id);
++  if (!binary) {
++    return { exitCode: 1, output: `probe: ${id} is not installed (run detect to see the roster).` };
++  }
++  const spec = make(repoRoot);
++  const err = run(spec);
++  if (err) {
++    return { exitCode: 1, output: `probe: ${id} failed: ${err}` };
++  }
++  return { exitCode: 0, output: `probe: ${id} ran (${spec.cmd} ${spec.args.join(' ')}).` };
++}
++
++export async function main(argv: string[]): Promise<number> {
++  if (argv.length !== 1) {
++    console.error('Usage: probe <harness-id>');
++    return 1;
++  }
++  const result = probeHarness(argv[0], process.cwd());
++  if (result.output) console.log(result.output);
++  return result.exitCode;
++}

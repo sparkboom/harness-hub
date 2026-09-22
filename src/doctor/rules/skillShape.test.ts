@@ -30,6 +30,7 @@ describe('skillShapeRule', () => {
     const findings = skillShapeRule.check(makeCtx(repoRoot));
     expect(findings).toHaveLength(1);
     expect(findings[0].message).toContain('empty');
+    expect(findings[0].ruleId).toBe('skill-missing-skill-md');
   });
 
   it('flags a flat .md file at the skills root', () => {
@@ -38,5 +39,6 @@ describe('skillShapeRule', () => {
     const findings = skillShapeRule.check(makeCtx(repoRoot));
     expect(findings).toHaveLength(1);
     expect(findings[0].message).toContain('stray.md');
+    expect(findings[0].ruleId).toBe('skill-flat-file');
   });
 });

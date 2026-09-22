@@ -1,0 +1,188 @@
+# Review package: cd35c9f..81bbff1
+
+## Commits
+81bbff1 feat: add harness-hub list and info commands
+
+## Files changed
+ src/cli.ts                | 12 ++++++++++++
+ src/commands/info.test.ts | 17 +++++++++++++++++
+ src/commands/info.ts      | 32 ++++++++++++++++++++++++++++++++
+ src/commands/list.test.ts | 21 +++++++++++++++++++++
+ src/commands/list.ts      | 24 ++++++++++++++++++++++++
+ 5 files changed, 106 insertions(+)
+
+## Diff
+diff --git a/src/cli.ts b/src/cli.ts
+index 9574f86..ea4f604 100644
+--- a/src/cli.ts
++++ b/src/cli.ts
+@@ -1,18 +1,20 @@
+ // src/cli.ts
+ import { Command } from 'commander';
+ import { findRepoRoot } from './repo';
+ import { isHarnessId, type HarnessId } from './harnesses';
+ import { enableHarnesses } from './commands/enable';
+ import { disableHarnesses } from './commands/disable';
+ import { migrateHarness } from './commands/migrate';
+ import { runDoctorCommand } from './commands/doctor';
++import { formatList } from './commands/list';
++import { infoHarness } from './commands/info';
+ import { getPackageVersion } from './version';
+ 
+ function parseHarnessIds(values: string[]): HarnessId[] {
+   const invalid = values.filter((v) => !isHarnessId(v));
+   if (invalid.length > 0) {
+     throw new Error(`Unrecognized harness id(s): ${invalid.join(', ')}`);
+   }
+   return values as HarnessId[];
+ }
+ 
+@@ -57,20 +59,30 @@ export async function main(argv: string[]): Promise<number> {
+     exitCode = result.exitCode;
+   });
+ 
+   program.command('doctor').action(() => {
+     const repoRoot = findRepoRoot(process.cwd());
+     const result = runDoctorCommand(repoRoot);
+     console.log(result.output);
+     exitCode = result.exitCode;
+   });
+ 
++  program.command('list').action(() => {
++    console.log(formatList());
++  });
++
++  program.command('info <harness>').action((harness: string) => {
++    const result = infoHarness(harness);
++    console.log(result.output);
++    exitCode = result.exitCode;
++  });
++
+   try {
+     await program.parseAsync(argv, { from: 'user' });
+   } catch (err) {
+     if (err && typeof err === 'object' && 'code' in err) {
+       const code = (err as { code: string }).code;
+       if (code === 'commander.helpDisplayed' || code === 'commander.version') {
+         return 0;
+       }
+     }
+     if (err instanceof Error) console.error(err.message);
+diff --git a/src/commands/info.test.ts b/src/commands/info.test.ts
+new file mode 100644
+index 0000000..bf8027b
+--- /dev/null
++++ b/src/commands/info.test.ts
+@@ -0,0 +1,17 @@
++import { describe, it, expect } from 'vitest';
++import { formatInfo, infoHarness } from './info';
++
++describe('infoHarness', () => {
++  it('returns detail for a known harness', () => {
++    const out = formatInfo('claude-code');
++    expect(out).toContain('claude-code');
++    expect(out).toContain('CLAUDE.md');
++    expect(out).toContain('.claude/skills');
++  });
++
++  it('returns exit 1 for an unknown id, naming the valid ids', () => {
++    const result = infoHarness('bogus');
++    expect(result.exitCode).toBe(1);
++    expect(result.output).toContain('bogus');
++  });
++});
+diff --git a/src/commands/info.ts b/src/commands/info.ts
+new file mode 100644
+index 0000000..c23231e
+--- /dev/null
++++ b/src/commands/info.ts
+@@ -0,0 +1,32 @@
++import { isHarnessId, type HarnessId } from '../harnesses';
++import { getHarnessEntry } from '../registry';
++
++export function formatInfo(id: HarnessId): string {
++  const e = getHarnessEntry(id);
++  const lines = [`${e.displayName} (${e.id})`, `  version: ${e.verifiedVersion} (verified ${e.verifiedDate})`];
++  if (e.agentsDoc.mode === 'symlink' && e.agentsDoc.symlinkPath) {
++    lines.push(`  agent doc: symlink -> ${e.agentsDoc.symlinkPath}`);
++  } else {
++    lines.push(`  agent doc: native (reads AGENTS.md)`);
++  }
++  if (e.skills.mode === 'migrate-symlink' && e.skills.symlinkPath) {
++    lines.push(`  skills: migrate-symlink -> ${e.skills.symlinkPath}`);
++  } else {
++    lines.push(`  skills: native (reads .agents/skills/)`);
++  }
++  if (e.skills.trustGate) {
++    lines.push(`  trust gate: ${e.skills.trustGate.trustCommand}`);
++    lines.push(`  trust ledger: ~/${e.skills.trustGate.configPathFromHome}`);
++  }
++  return lines.join('\n');
++}
++
++export function infoHarness(id: string): { output: string; exitCode: number } {
++  if (!isHarnessId(id)) {
++    return {
++      output: `harness-hub info: unrecognized harness id "${id}" (valid: claude-code, cursor, opencode, codex, hermes, pi, deepseek)`,
++      exitCode: 1,
++    };
++  }
++  return { output: formatInfo(id), exitCode: 0 };
++}
+diff --git a/src/commands/list.test.ts b/src/commands/list.test.ts
+new file mode 100644
+index 0000000..d8aa3af
+--- /dev/null
++++ b/src/commands/list.test.ts
+@@ -0,0 +1,21 @@
++import { describe, it, expect } from 'vitest';
++import { ALL_HARNESS_IDS } from '../harnesses';
++import { formatList } from './list';
++
++describe('formatList', () => {
++  it('names every harness id', () => {
++    const out = formatList();
++    for (const id of ALL_HARNESS_IDS) expect(out).toContain(id);
++  });
++
++  it('shows each harness version', () => {
++    const out = formatList();
++    expect(out).toContain('2.1.272'); // claude-code
++    expect(out).toContain('1.18.31'); // opencode
++  });
++
++  it('is sorted by harness id', () => {
++    const ids = ALL_HARNESS_IDS.map((id) => formatList().indexOf(id));
++    expect([...ids].sort((a, b) => a - b)).toEqual(ids);
++  });
++});
+diff --git a/src/commands/list.ts b/src/commands/list.ts
+new file mode 100644
+index 0000000..88afb7a
+--- /dev/null
++++ b/src/commands/list.ts
+@@ -0,0 +1,24 @@
++import { ALL_HARNESS_IDS } from '../harnesses';
++import { getHarnessEntry } from '../registry';
++
++function pad(value: string, width: number): string {
++  return value.length >= width ? value : value + ' '.repeat(width - value.length);
++}
++
++export function formatList(): string {
++  const rows = [...ALL_HARNESS_IDS].map((id) => {
++    const e = getHarnessEntry(id);
++    const skills = e.skills.mode === 'migrate-symlink' ? 'migrate-symlink' : e.skills.mode;
++    return [
++      pad(e.id, 12),
++      pad(e.displayName, 18),
++      pad(e.verifiedVersion, 12),
++      pad(e.agentsDoc.mode, 12),
++      skills,
++    ].join(' ');
++  });
++  return [
++    `${pad('ID', 12)}${pad('NAME', 18)}${pad('VERSION', 12)}${pad('AGENT DOC', 12)}SKILLS`,
++    ...rows,
++  ].join('\n');
++}

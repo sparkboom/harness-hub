@@ -1,0 +1,603 @@
+# Review package: 9ab5c62..cd35c9f
+
+## Commits
+cd35c9f refactor: rename finding ruleIds to be failure-specific
+
+## Files changed
+ src/cli.ts                                  |  2 +-
+ src/commands/enable.test.ts                 |  4 ++--
+ src/commands/enable.ts                      |  2 +-
+ src/commands/migrate.test.ts                |  8 ++++----
+ src/commands/migrate.ts                     |  4 ++--
+ src/doctor/rules/clobberRisk.test.ts        |  2 ++
+ src/doctor/rules/clobberRisk.ts             |  4 ++--
+ src/doctor/rules/configValidity.test.ts     |  4 ++++
+ src/doctor/rules/configValidity.ts          |  8 ++++----
+ src/doctor/rules/generatedFileDrift.test.ts |  2 +-
+ src/doctor/rules/generatedFileDrift.ts      |  2 +-
+ src/doctor/rules/skillFrontmatter.test.ts   |  4 +++-
+ src/doctor/rules/skillFrontmatter.ts        | 10 +++++++++-
+ src/doctor/rules/skillShape.test.ts         |  2 ++
+ src/doctor/rules/skillShape.ts              |  4 ++--
+ src/wiring/migrateSymlink.ts                |  5 +++--
+ 16 files changed, 43 insertions(+), 24 deletions(-)
+
+## Diff
+diff --git a/src/cli.ts b/src/cli.ts
+index a23f33a..9574f86 100644
+--- a/src/cli.ts
++++ b/src/cli.ts
+@@ -16,21 +16,21 @@ function parseHarnessIds(values: string[]): HarnessId[] {
+   return values as HarnessId[];
+ }
+ 
+ export async function main(argv: string[]): Promise<number> {
+   let exitCode = 0;
+   const program = new Command();
+   program.name('harness-hub').version(getPackageVersion()).exitOverride();
+ 
+   program
+     .command('enable <harnesses...>')
+-    .option('--force', 'overwrite clobber-risk findings (CLAUDE.md, .claude/skills symlink target)')
++    .option('--force', 'overwrite clobber findings (CLAUDE.md, .claude/skills symlink target)')
+     .action((harnesses: string[], opts: { force?: boolean }) => {
+       const repoRoot = findRepoRoot(process.cwd());
+       const harnessIds = parseHarnessIds(harnesses);
+       const result = enableHarnesses(repoRoot, harnessIds, { force: opts.force });
+       for (const r of result.results) {
+         if (r.status === 'blocked') {
+           console.error(`harness-hub enable ${r.harnessId}: blocked`);
+           for (const f of r.blockingFindings) {
+             console.error(`  [${f.severity.toUpperCase()}] ${f.message}\n  \u2192 ${f.remediation}`);
+           }
+diff --git a/src/commands/enable.test.ts b/src/commands/enable.test.ts
+index 5355c17..725d810 100644
+--- a/src/commands/enable.test.ts
++++ b/src/commands/enable.test.ts
+@@ -85,21 +85,21 @@ describe('enableHarnesses', () => {
+     writeFileSync(join(repoRoot, '.agents', 'skills', 'a', 'SKILL.md'), '---\nname: a\ndescription: x\n---\nsame');
+     const result = enableHarnesses(repoRoot, ['claude-code']);
+     expect(result.exitCode).toBe(0);
+     expect(lstatSync(join(repoRoot, '.claude', 'skills')).isSymbolicLink()).toBe(true);
+   });
+ 
+   it('blocks on a hand-written CLAUDE.md without --force', () => {
+     writeFileSync(join(repoRoot, 'CLAUDE.md'), '# hand-written\n');
+     const result = enableHarnesses(repoRoot, ['claude-code']);
+     expect(result.results[0].status).toBe('blocked');
+-    expect(result.results[0].blockingFindings[0].ruleId).toBe('clobber-risk');
++    expect(result.results[0].blockingFindings[0].ruleId).toBe('claude-md-clobber');
+   });
+ 
+   it('overwrites a hand-written CLAUDE.md with --force', () => {
+     writeFileSync(join(repoRoot, 'CLAUDE.md'), '# hand-written\n');
+     const result = enableHarnesses(repoRoot, ['claude-code'], { force: true });
+     expect(result.exitCode).toBe(0);
+     expect(lstatSync(join(repoRoot, 'CLAUDE.md')).isSymbolicLink()).toBe(true);
+   });
+ 
+   it('blocks every requested harness on a global error (missing AGENTS.md)', () => {
+@@ -146,21 +146,21 @@ describe('enableHarnesses', () => {
+     expect(lstatSync(join(repoRoot, 'CLAUDE.md')).isSymbolicLink()).toBe(true);
+     expect(readlinkSync(join(repoRoot, 'CLAUDE.md'))).toBe('AGENTS.md');
+   });
+ 
+   it('does not clobber a foreign file on drift-repair without --force', () => {
+     enableHarnesses(repoRoot, ['claude-code']);
+     rmSync(join(repoRoot, 'CLAUDE.md'));
+     writeFileSync(join(repoRoot, 'CLAUDE.md'), '# hand-written\n');
+     const result = enableHarnesses(repoRoot, ['claude-code']);
+     expect(result.results[0].status).toBe('blocked');
+-    expect(result.results[0].blockingFindings[0].ruleId).toBe('clobber-risk');
++    expect(result.results[0].blockingFindings[0].ruleId).toBe('claude-md-clobber');
+     expect(readFileSync(join(repoRoot, 'CLAUDE.md'), 'utf8')).toBe('# hand-written\n');
+   });
+ 
+   it('repairs drifted symlinks past a foreign file with --force', () => {
+     enableHarnesses(repoRoot, ['claude-code']);
+     rmSync(join(repoRoot, 'CLAUDE.md'));
+     writeFileSync(join(repoRoot, 'CLAUDE.md'), '# hand-written\n');
+     const result = enableHarnesses(repoRoot, ['claude-code'], { force: true });
+     expect(result.exitCode).toBe(0);
+     expect(lstatSync(join(repoRoot, 'CLAUDE.md')).isSymbolicLink()).toBe(true);
+diff --git a/src/commands/enable.ts b/src/commands/enable.ts
+index 8f6ff3c..217280d 100644
+--- a/src/commands/enable.ts
++++ b/src/commands/enable.ts
+@@ -49,21 +49,21 @@ export function enableHarnesses(
+       const entry = getHarnessEntry(harnessId);
+       const harnessFindings = allFindings.filter((f) => f.harnessId === harnessId);
+       const blocking = harnessFindings.filter((f) => f.severity === 'error' && (!f.forceable || !options.force));
+       if (blocking.length > 0) {
+         results.push({ harnessId, status: 'blocked', blockingFindings: blocking });
+         continue;
+       }
+       // Spec §8: re-running enable refreshes the wiring. Doctor's drift rule
+       // covers already-configured harnesses, so repair the symlinks idempotently
+       // when it reports drift (a blocking guard above keeps foreign files safe).
+-      const drifted = harnessFindings.some((f) => f.ruleId === 'generated-file-drift' && f.severity === 'warning');
++      const drifted = harnessFindings.some((f) => f.ruleId === 'claude-drift' && f.severity === 'warning');
+       if (drifted) {
+         wireMigrateSymlinkHarness(repoRoot, entry);
+       }
+       results.push({ harnessId, status: 'already-enabled', blockingFindings: [] });
+       continue;
+     }
+ 
+     const harnessFindings = allFindings.filter((f) => f.harnessId === harnessId);
+     const blocking = harnessFindings.filter((f) => f.severity === 'error' && (!f.forceable || !options.force));
+ 
+diff --git a/src/commands/migrate.test.ts b/src/commands/migrate.test.ts
+index 0ec099e..8c0ef0b 100644
+--- a/src/commands/migrate.test.ts
++++ b/src/commands/migrate.test.ts
+@@ -46,36 +46,36 @@ describe('migrateHarness', () => {
+   });
+ 
+   it('is a no-op the second time it runs', () => {
+     mkdirSync(join(repoRoot, '.claude', 'skills', 'a'), { recursive: true });
+     writeFileSync(join(repoRoot, '.claude', 'skills', 'a', 'SKILL.md'), '---\nname: a\ndescription: x\n---\nbody');
+     migrateHarness(repoRoot, 'claude-code');
+     const second = migrateHarness(repoRoot, 'claude-code');
+     expect(second.output).toContain('nothing to migrate');
+   });
+ 
+-  it('refuses to adopt an entry without a SKILL.md (clobber-risk)', () => {
++  it('refuses to adopt an entry without a SKILL.md (invalid skill)', () => {
+     mkdirSync(join(repoRoot, '.claude', 'skills', 'bad'), { recursive: true });
+     writeFileSync(join(repoRoot, '.claude', 'skills', 'bad', 'notaskill.md'), 'junk');
+     const result = migrateHarness(repoRoot, 'claude-code');
+     expect(result.exitCode).toBe(1);
+-    expect(result.output).toContain('clobber-risk');
++    expect(result.output).toContain('invalid skill');
+     expect(result.output).toContain('bad');
+     expect(existsSync(join(repoRoot, '.agents', 'skills', 'bad'))).toBe(false);
+   });
+ 
+-  it('refuses to adopt an entry with invalid frontmatter (clobber-risk)', () => {
++  it('refuses to adopt an entry with invalid frontmatter (invalid skill)', () => {
+     mkdirSync(join(repoRoot, '.claude', 'skills', 'badname'), { recursive: true });
+     writeFileSync(join(repoRoot, '.claude', 'skills', 'badname', 'SKILL.md'), '---\nname: Bad_Name\ndescription: x\n---\nbody');
+     const result = migrateHarness(repoRoot, 'claude-code');
+     expect(result.exitCode).toBe(1);
+-    expect(result.output).toContain('clobber-risk');
++    expect(result.output).toContain('invalid skill');
+     expect(existsSync(join(repoRoot, '.agents', 'skills', 'badname'))).toBe(false);
+   });
+ 
+   it('still adopts valid skills atomically after rejecting an invalid one', () => {
+     mkdirSync(join(repoRoot, '.claude', 'skills', 'good'), { recursive: true });
+     writeFileSync(join(repoRoot, '.claude', 'skills', 'good', 'SKILL.md'), '---\nname: good\ndescription: fine\n---\nbody');
+     mkdirSync(join(repoRoot, '.claude', 'skills', 'bad'), { recursive: true });
+     writeFileSync(join(repoRoot, '.claude', 'skills', 'bad', 'notaskill.md'), 'junk');
+     const result = migrateHarness(repoRoot, 'claude-code');
+     expect(result.exitCode).toBe(1);
+diff --git a/src/commands/migrate.ts b/src/commands/migrate.ts
+index ab4c2aa..2fe00f8 100644
+--- a/src/commands/migrate.ts
++++ b/src/commands/migrate.ts
+@@ -52,32 +52,32 @@ export function migrateHarness(repoRoot: string, harnessId: HarnessId): MigrateC
+       exitCode: 1,
+     };
+   }
+ 
+   const toCopy = plan.filter((e) => e.classification === 'new');
+   if (toCopy.length === 0) {
+     return { output: 'harness-hub migrate: nothing to migrate.', exitCode: 0 };
+   }
+ 
+   // Spec §6: validate every entry against the skill-shape/frontmatter contract
+-  // BEFORE adopting it — anything that fails is a clobber-risk error, because
++  // BEFORE adopting it — anything that fails is an invalid-skill error, because
+   // adopting junk would poison every future enable with canon-wide errors.
+   const invalid = toCopy.filter((e) => {
+     const { hasSkillMd, frontmatter } = readHarnessSkillFrontmatter(join(e.harnessSkillPath, 'SKILL.md'));
+     return !hasSkillMd || validateSkillFrontmatter(e.name, frontmatter).length > 0;
+   });
+   if (invalid.length > 0) {
+     const lines = invalid.map(
+       (e) => `  ${entry.skills.symlinkPath}/${e.name}/ fails the skill contract (missing or invalid SKILL.md frontmatter)`
+     );
+     return {
+-      output: `harness-hub migrate: clobber-risk — refusing to adopt invalid skill(s), fix by hand and re-run:\n${lines.join('\n')}`,
++      output: `harness-hub migrate: invalid skill — refusing to adopt invalid skill(s), fix by hand and re-run:\n${lines.join('\n')}`,
+       exitCode: 1,
+     };
+   }
+ 
+   for (const planEntry of toCopy) {
+     copyDirRecursive(planEntry.harnessSkillPath, planEntry.canonSkillPath);
+   }
+ 
+   return {
+     output: `harness-hub migrate: adopted ${toCopy.length} skill(s) into canon: ${toCopy.map((e) => e.name).join(', ')}`,
+diff --git a/src/doctor/rules/clobberRisk.test.ts b/src/doctor/rules/clobberRisk.test.ts
+index 0df77ef..8387b69 100644
+--- a/src/doctor/rules/clobberRisk.test.ts
++++ b/src/doctor/rules/clobberRisk.test.ts
+@@ -29,25 +29,27 @@ describe('clobberRiskRule', () => {
+   it('passes when CLAUDE.md is the expected symlink', () => {
+     writeFileSync(join(repoRoot, 'AGENTS.md'), '# Agents\n');
+     symlinkSync('AGENTS.md', join(repoRoot, 'CLAUDE.md'));
+     expect(clobberRiskRule.check(makeCtx(repoRoot, ['claude-code']))).toEqual([]);
+   });
+ 
+   it('flags a hand-written CLAUDE.md', () => {
+     writeFileSync(join(repoRoot, 'CLAUDE.md'), '# hand-written\n');
+     const findings = clobberRiskRule.check(makeCtx(repoRoot, ['claude-code']));
+     expect(findings.some((f) => f.message.includes('CLAUDE.md'))).toBe(true);
++    expect(findings.some((f) => f.ruleId === 'claude-md-clobber')).toBe(true);
+     expect(findings.every((f) => f.forceable)).toBe(true);
+   });
+ 
+   it('flags a .claude/skills symlink pointing elsewhere', () => {
+     mkdirSync(join(repoRoot, '.claude'), { recursive: true });
+     symlinkSync('/somewhere/else', join(repoRoot, '.claude', 'skills'));
+     const findings = clobberRiskRule.check(makeCtx(repoRoot, ['claude-code']));
+     expect(findings.some((f) => f.message.includes('.claude/skills'))).toBe(true);
++    expect(findings.some((f) => f.ruleId === 'claude-skills-clobber')).toBe(true);
+   });
+ 
+   it('does not flag .claude/skills when it is a real directory (handled by the skill-migration rule instead)', () => {
+     mkdirSync(join(repoRoot, '.claude', 'skills'), { recursive: true });
+     expect(clobberRiskRule.check(makeCtx(repoRoot, ['claude-code']))).toEqual([]);
+   });
+ });
+diff --git a/src/doctor/rules/clobberRisk.ts b/src/doctor/rules/clobberRisk.ts
+index 0f3fc87..57143fc 100644
+--- a/src/doctor/rules/clobberRisk.ts
++++ b/src/doctor/rules/clobberRisk.ts
+@@ -35,36 +35,36 @@ export const clobberRiskRule: DoctorRule = {
+     const findings: Finding[] = [];
+     for (const id of ALL_HARNESS_IDS) {
+       if (!isRelevant(ctx, id)) continue;
+       const entry = getHarnessEntry(id);
+ 
+       if (entry.agentsDoc.mode === 'symlink' && entry.agentsDoc.symlinkPath) {
+         const linkPath = join(ctx.repoRoot, entry.agentsDoc.symlinkPath);
+         const target = relativeSymlinkTarget(ctx.repoRoot, entry.agentsDoc.symlinkPath, join(ctx.repoRoot, AGENTS_MD_FILENAME));
+         if (pathPresent(linkPath) && !isSymlinkTo(linkPath, target)) {
+           findings.push({
+-            ruleId: 'clobber-risk',
++            ruleId: 'claude-md-clobber',
+             severity: 'error',
+             message: `${entry.agentsDoc.symlinkPath} exists and is not a symlink to AGENTS.md.`,
+             remediation: `Remove or back up ${entry.agentsDoc.symlinkPath}, or re-run enable with --force to replace it.`,
+             harnessId: id,
+             forceable: true,
+           });
+         }
+       }
+ 
+       if (entry.skills.mode === 'migrate-symlink' && entry.skills.symlinkPath) {
+         const linkPath = join(ctx.repoRoot, entry.skills.symlinkPath);
+         const target = relativeSymlinkTarget(ctx.repoRoot, entry.skills.symlinkPath, skillsRootDir(ctx.repoRoot));
+         if (pathPresent(linkPath) && lstatSync(linkPath).isSymbolicLink() && !isSymlinkTo(linkPath, target)) {
+           findings.push({
+-            ruleId: 'clobber-risk',
++            ruleId: 'claude-skills-clobber',
+             severity: 'error',
+             message: `${entry.skills.symlinkPath} is a symlink, but not to .agents/skills.`,
+             remediation: `Remove the existing ${entry.skills.symlinkPath} symlink, or re-run enable with --force to replace it.`,
+             harnessId: id,
+             forceable: true,
+           });
+         }
+       }
+     }
+     return findings;
+diff --git a/src/doctor/rules/configValidity.test.ts b/src/doctor/rules/configValidity.test.ts
+index 8b911a6..580b7d3 100644
+--- a/src/doctor/rules/configValidity.test.ts
++++ b/src/doctor/rules/configValidity.test.ts
+@@ -12,32 +12,36 @@ describe('configValidityRule', () => {
+   });
+ 
+   it('passes for a valid config with no unknown ids', () => {
+     const ctx = makeCtx({ status: 'ok', format: 'yaml', path: '/repo/harness-hub.yaml', harnesses: ['cursor'], unknownIds: [] });
+     expect(configValidityRule.check(ctx)).toEqual([]);
+   });
+ 
+   it('flags unknown harness ids in an otherwise-valid config', () => {
+     const ctx = makeCtx({ status: 'ok', format: 'yaml', path: '/repo/harness-hub.yaml', harnesses: [], unknownIds: ['bogus'] });
+     expect(configValidityRule.check(ctx)[0].severity).toBe('error');
++    expect(configValidityRule.check(ctx)[0].ruleId).toBe('config-unknown-harness-id');
+   });
+ 
+   it('flags ambiguous config (both files present)', () => {
+     const ctx = makeCtx({ status: 'ambiguous', yamlPath: '/repo/harness-hub.yaml', jsonPath: '/repo/harness-hub.json' });
+     expect(configValidityRule.check(ctx)[0].severity).toBe('error');
++    expect(configValidityRule.check(ctx)[0].ruleId).toBe('config-ambiguous');
+   });
+ 
+   it('flags a parse error', () => {
+     const ctx = makeCtx({ status: 'parse-error', format: 'yaml', path: '/repo/harness-hub.yaml', error: 'bad yaml' });
+     expect(configValidityRule.check(ctx)[0].message).toContain('bad yaml');
++    expect(configValidityRule.check(ctx)[0].ruleId).toBe('config-parse-error');
+   });
+ 
+   it('flags an invalid shape', () => {
+     const ctx = makeCtx({
+       status: 'invalid-shape',
+       format: 'yaml',
+       path: '/repo/harness-hub.yaml',
+       reason: '"harnesses" must be an array',
+     });
+     expect(configValidityRule.check(ctx)[0].severity).toBe('error');
++    expect(configValidityRule.check(ctx)[0].ruleId).toBe('config-invalid-shape');
+   });
+ });
+diff --git a/src/doctor/rules/configValidity.ts b/src/doctor/rules/configValidity.ts
+index b4fc178..936f8ea 100644
+--- a/src/doctor/rules/configValidity.ts
++++ b/src/doctor/rules/configValidity.ts
+@@ -5,50 +5,50 @@ export const configValidityRule: DoctorRule = {
+   applies: () => true,
+   check: (ctx) => {
+     const { config } = ctx;
+     switch (config.status) {
+       case 'absent':
+         return [];
+       case 'ok':
+         if (config.unknownIds.length === 0) return [];
+         return [
+           {
+-            ruleId: 'config-validity',
++            ruleId: 'config-unknown-harness-id',
+             severity: 'error',
+             message: `${config.path} lists unrecognized harness id(s): ${config.unknownIds.join(', ')}`,
+             remediation: 'Remove or fix the unrecognized id(s) in the "harnesses" list.',
+             forceable: false,
+           },
+         ];
+       case 'ambiguous':
+         return [
+           {
+-            ruleId: 'config-validity',
++            ruleId: 'config-ambiguous',
+             severity: 'error',
+             message: `Both ${config.yamlPath} and ${config.jsonPath} exist.`,
+             remediation: 'Keep exactly one of harness-hub.yaml / harness-hub.json and delete the other.',
+             forceable: false,
+           },
+         ];
+       case 'parse-error':
+         return [
+           {
+-            ruleId: 'config-validity',
++            ruleId: 'config-parse-error',
+             severity: 'error',
+             message: `${config.path} could not be parsed: ${config.error}`,
+             remediation: `Fix the syntax error in ${config.path}.`,
+             forceable: false,
+           },
+         ];
+       case 'invalid-shape':
+         return [
+           {
+-            ruleId: 'config-validity',
++            ruleId: 'config-invalid-shape',
+             severity: 'error',
+             message: `${config.path} is invalid: ${config.reason}`,
+             remediation: `Fix ${config.path} so it has a top-level "harnesses" array.`,
+             forceable: false,
+           },
+         ];
+     }
+   },
+ };
+diff --git a/src/doctor/rules/generatedFileDrift.test.ts b/src/doctor/rules/generatedFileDrift.test.ts
+index 0443a1f..c2fe2b1 100644
+--- a/src/doctor/rules/generatedFileDrift.test.ts
++++ b/src/doctor/rules/generatedFileDrift.test.ts
+@@ -17,21 +17,21 @@ describe('generatedFileDriftRule', () => {
+   afterEach(() => {
+     rmSync(repoRoot, { recursive: true, force: true });
+   });
+ 
+   it('does not apply when claude-code is not configured', () => {
+     expect(generatedFileDriftRule.applies(makeCtx(repoRoot, []))).toBe(false);
+   });
+ 
+   it('warns when the symlinks are missing', () => {
+     expect(generatedFileDriftRule.check(makeCtx(repoRoot))).toEqual([
+-      expect.objectContaining({ ruleId: 'generated-file-drift', severity: 'warning', harnessId: 'claude-code' }),
++      expect.objectContaining({ ruleId: 'claude-drift', severity: 'warning', harnessId: 'claude-code' }),
+     ]);
+   });
+ 
+   it('passes when both symlinks are correct', () => {
+     writeFileSync(join(repoRoot, 'AGENTS.md'), '# Agents\n');
+     symlinkSync('AGENTS.md', join(repoRoot, 'CLAUDE.md'));
+     mkdirSync(join(repoRoot, '.agents', 'skills'), { recursive: true });
+     mkdirSync(join(repoRoot, '.claude'), { recursive: true });
+     symlinkSync(join('..', '.agents', 'skills'), join(repoRoot, '.claude', 'skills'));
+     expect(generatedFileDriftRule.check(makeCtx(repoRoot))).toEqual([]);
+diff --git a/src/doctor/rules/generatedFileDrift.ts b/src/doctor/rules/generatedFileDrift.ts
+index ea96d3e..2f6ae20 100644
+--- a/src/doctor/rules/generatedFileDrift.ts
++++ b/src/doctor/rules/generatedFileDrift.ts
+@@ -25,21 +25,21 @@ export const generatedFileDriftRule: DoctorRule = {
+         if (!isSymlinkTo(linkPath, target)) problems.push(entry.agentsDoc.symlinkPath);
+       }
+       if (entry.skills.mode === 'migrate-symlink' && entry.skills.symlinkPath) {
+         const linkPath = join(ctx.repoRoot, entry.skills.symlinkPath);
+         const target = relativeSymlinkTarget(ctx.repoRoot, entry.skills.symlinkPath, skillsRootDir(ctx.repoRoot));
+         if (!isSymlinkTo(linkPath, target)) problems.push(entry.skills.symlinkPath);
+       }
+ 
+       if (problems.length > 0) {
+         findings.push({
+-          ruleId: 'generated-file-drift',
++          ruleId: 'claude-drift',
+           severity: 'warning',
+           message: `${id} is enabled, but ${problems.join(' and ')} ${problems.length > 1 ? 'are' : 'is'} missing or not the expected symlink.`,
+           remediation: `Re-run \`harness-hub enable ${id}\` to restore the expected symlink(s).`,
+           harnessId: id,
+           forceable: false,
+         });
+       }
+     }
+     return findings;
+   },
+diff --git a/src/doctor/rules/skillFrontmatter.test.ts b/src/doctor/rules/skillFrontmatter.test.ts
+index ce7da58..b726603 100644
+--- a/src/doctor/rules/skillFrontmatter.test.ts
++++ b/src/doctor/rules/skillFrontmatter.test.ts
+@@ -22,18 +22,20 @@ describe('skillFrontmatterRule', () => {
+     const dir = join(repoRoot, '.agents', 'skills', 'writing-tests');
+     mkdirSync(dir, { recursive: true });
+     writeFileSync(join(dir, 'SKILL.md'), '---\nname: writing-tests\ndescription: x\n---\n');
+     expect(skillFrontmatterRule.check(makeCtx(repoRoot))).toEqual([]);
+   });
+ 
+   it('flags a name/directory mismatch', () => {
+     const dir = join(repoRoot, '.agents', 'skills', 'writing-tests');
+     mkdirSync(dir, { recursive: true });
+     writeFileSync(join(dir, 'SKILL.md'), '---\nname: other\ndescription: x\n---\n');
+-    expect(skillFrontmatterRule.check(makeCtx(repoRoot)).length).toBeGreaterThan(0);
++    const findings = skillFrontmatterRule.check(makeCtx(repoRoot));
++    expect(findings.length).toBeGreaterThan(0);
++    expect(findings.some((f) => f.ruleId === 'skill-name-mismatch')).toBe(true);
+   });
+ 
+   it('skips directories with no SKILL.md (left to skill-shape rule)', () => {
+     mkdirSync(join(repoRoot, '.agents', 'skills', 'empty'), { recursive: true });
+     expect(skillFrontmatterRule.check(makeCtx(repoRoot))).toEqual([]);
+   });
+ });
+diff --git a/src/doctor/rules/skillFrontmatter.ts b/src/doctor/rules/skillFrontmatter.ts
+index 25e678a..7c695be 100644
+--- a/src/doctor/rules/skillFrontmatter.ts
++++ b/src/doctor/rules/skillFrontmatter.ts
+@@ -1,25 +1,33 @@
+ import { listSkillDirNames, readSkillFrontmatter } from '../../canon';
+ import { validateSkillFrontmatter } from '../../skills/validate';
+ import type { DoctorRule, Finding } from '../types';
+ 
++const CODE_TO_RULE_ID: Record<string, string> = {
++  'missing-name': 'skill-missing-name',
++  'invalid-name-format': 'skill-invalid-name-format',
++  'name-mismatch': 'skill-name-mismatch',
++  'missing-description': 'skill-missing-description',
++  'description-length': 'skill-description-length',
++};
++
+ export const skillFrontmatterRule: DoctorRule = {
+   id: 'skill-frontmatter',
+   applies: () => true,
+   check: (ctx) => {
+     const findings: Finding[] = [];
+     for (const name of listSkillDirNames(ctx.repoRoot)) {
+       const { hasSkillMd, frontmatter } = readSkillFrontmatter(ctx.repoRoot, name);
+       if (!hasSkillMd) continue; // reported by skill-shape instead
+       for (const issue of validateSkillFrontmatter(name, frontmatter)) {
+         findings.push({
+-          ruleId: 'skill-frontmatter',
++          ruleId: CODE_TO_RULE_ID[issue.code] ?? 'skill-frontmatter',
+           severity: 'error',
+           message: issue.message,
+           remediation: `Fix the frontmatter in .agents/skills/${name}/SKILL.md.`,
+           forceable: false,
+         });
+       }
+     }
+     return findings;
+   },
+ };
+diff --git a/src/doctor/rules/skillShape.test.ts b/src/doctor/rules/skillShape.test.ts
+index c74890d..18bcfc5 100644
+--- a/src/doctor/rules/skillShape.test.ts
++++ b/src/doctor/rules/skillShape.test.ts
+@@ -23,20 +23,22 @@ describe('skillShapeRule', () => {
+     mkdirSync(dir, { recursive: true });
+     writeFileSync(join(dir, 'SKILL.md'), '---\nname: writing-tests\ndescription: x\n---\n');
+     expect(skillShapeRule.check(makeCtx(repoRoot))).toEqual([]);
+   });
+ 
+   it('flags a skill directory with no SKILL.md', () => {
+     mkdirSync(join(repoRoot, '.agents', 'skills', 'empty'), { recursive: true });
+     const findings = skillShapeRule.check(makeCtx(repoRoot));
+     expect(findings).toHaveLength(1);
+     expect(findings[0].message).toContain('empty');
++    expect(findings[0].ruleId).toBe('skill-missing-skill-md');
+   });
+ 
+   it('flags a flat .md file at the skills root', () => {
+     mkdirSync(join(repoRoot, '.agents', 'skills'), { recursive: true });
+     writeFileSync(join(repoRoot, '.agents', 'skills', 'stray.md'), '# stray');
+     const findings = skillShapeRule.check(makeCtx(repoRoot));
+     expect(findings).toHaveLength(1);
+     expect(findings[0].message).toContain('stray.md');
++    expect(findings[0].ruleId).toBe('skill-flat-file');
+   });
+ });
+diff --git a/src/doctor/rules/skillShape.ts b/src/doctor/rules/skillShape.ts
+index 354ddf5..1d32d4c 100644
+--- a/src/doctor/rules/skillShape.ts
++++ b/src/doctor/rules/skillShape.ts
+@@ -1,32 +1,32 @@
+ import { listSkillDirNames, listSkillsRootNonDirEntries, readSkillFrontmatter } from '../../canon';
+ import type { DoctorRule, Finding } from '../types';
+ 
+ export const skillShapeRule: DoctorRule = {
+   id: 'skill-shape',
+   applies: () => true,
+   check: (ctx) => {
+     const findings: Finding[] = [];
+     for (const entryName of listSkillsRootNonDirEntries(ctx.repoRoot)) {
+       findings.push({
+-        ruleId: 'skill-shape',
++        ruleId: 'skill-flat-file',
+         severity: 'error',
+         message: `.agents/skills/${entryName} is not a directory — skills must be laid out as <name>/SKILL.md.`,
+         remediation: `Move ${entryName} into its own <skill-name>/SKILL.md directory.`,
+         forceable: false,
+       });
+     }
+     for (const name of listSkillDirNames(ctx.repoRoot)) {
+       const { hasSkillMd } = readSkillFrontmatter(ctx.repoRoot, name);
+       if (!hasSkillMd) {
+         findings.push({
+-          ruleId: 'skill-shape',
++          ruleId: 'skill-missing-skill-md',
+           severity: 'error',
+           message: `.agents/skills/${name}/ has no SKILL.md.`,
+           remediation: `Add .agents/skills/${name}/SKILL.md, or remove the directory if it isn't a skill.`,
+           forceable: false,
+         });
+       }
+     }
+     return findings;
+   },
+ };
+diff --git a/src/wiring/migrateSymlink.ts b/src/wiring/migrateSymlink.ts
+index 305db39..712b709 100644
+--- a/src/wiring/migrateSymlink.ts
++++ b/src/wiring/migrateSymlink.ts
+@@ -22,22 +22,23 @@ function ensureSymlink(repoRoot: string, linkRelPath: string, targetAbsPath: str
+     rmSync(linkAbsPath, { recursive: true, force: true });
+   }
+   if (!pathPresent(linkAbsPath)) {
+     mkdirSync(dirname(linkAbsPath), { recursive: true });
+     symlinkSync(target, linkAbsPath);
+   }
+ }
+ 
+ /**
+  * Wires a harness's AGENTS.md symlink and/or skills symlink per its registry
+- * entry. Assumes doctor's blocking checks (clobber-risk, unmigrated-skills,
+- * skill-migration-collision) already passed for this harness.
++ * entry. Assumes doctor's blocking checks (claude-md-clobber,
++ * claude-skills-clobber, unmigrated-skills, skill-migration-collision)
++ * already passed for this harness.
+  */
+ export function wireMigrateSymlinkHarness(repoRoot: string, entry: HarnessEntry): void {
+   if (entry.skills.mode === 'migrate-symlink' && entry.skills.symlinkPath) {
+     ensureSymlink(repoRoot, entry.skills.symlinkPath, skillsRootDir(repoRoot));
+   }
+   if (entry.agentsDoc.mode === 'symlink' && entry.agentsDoc.symlinkPath) {
+     ensureSymlink(repoRoot, entry.agentsDoc.symlinkPath, join(repoRoot, AGENTS_MD_FILENAME));
+   }
+   const gitignoreEntries = [entry.agentsDoc.symlinkPath, entry.skills.symlinkPath].filter(
+     (p): p is string => Boolean(p)

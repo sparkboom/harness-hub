@@ -24,7 +24,7 @@ describe('generatedFileDriftRule', () => {
 
   it('warns when the symlinks are missing', () => {
     expect(generatedFileDriftRule.check(makeCtx(repoRoot))).toEqual([
-      expect.objectContaining({ ruleId: 'generated-file-drift', severity: 'warning', harnessId: 'claude-code' }),
+      expect.objectContaining({ ruleId: 'claude-drift', severity: 'warning', harnessId: 'claude-code' }),
     ]);
   });
 

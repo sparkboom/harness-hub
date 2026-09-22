@@ -12,7 +12,7 @@ export const configValidityRule: DoctorRule = {
         if (config.unknownIds.length === 0) return [];
         return [
           {
-            ruleId: 'config-validity',
+            ruleId: 'config-unknown-harness-id',
             severity: 'error',
             message: `${config.path} lists unrecognized harness id(s): ${config.unknownIds.join(', ')}`,
             remediation: 'Remove or fix the unrecognized id(s) in the "harnesses" list.',
@@ -22,7 +22,7 @@ export const configValidityRule: DoctorRule = {
       case 'ambiguous':
         return [
           {
-            ruleId: 'config-validity',
+            ruleId: 'config-ambiguous',
             severity: 'error',
             message: `Both ${config.yamlPath} and ${config.jsonPath} exist.`,
             remediation: 'Keep exactly one of harness-hub.yaml / harness-hub.json and delete the other.',
@@ -32,7 +32,7 @@ export const configValidityRule: DoctorRule = {
       case 'parse-error':
         return [
           {
-            ruleId: 'config-validity',
+            ruleId: 'config-parse-error',
             severity: 'error',
             message: `${config.path} could not be parsed: ${config.error}`,
             remediation: `Fix the syntax error in ${config.path}.`,
@@ -42,7 +42,7 @@ export const configValidityRule: DoctorRule = {
       case 'invalid-shape':
         return [
           {
-            ruleId: 'config-validity',
+            ruleId: 'config-invalid-shape',
             severity: 'error',
             message: `${config.path} is invalid: ${config.reason}`,
             remediation: `Fix ${config.path} so it has a top-level "harnesses" array.`,

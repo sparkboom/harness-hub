@@ -32,7 +32,7 @@ export const generatedFileDriftRule: DoctorRule = {
 
       if (problems.length > 0) {
         findings.push({
-          ruleId: 'generated-file-drift',
+          ruleId: 'claude-drift',
           severity: 'warning',
           message: `${id} is enabled, but ${problems.join(' and ')} ${problems.length > 1 ? 'are' : 'is'} missing or not the expected symlink.`,
           remediation: `Re-run \`harness-hub enable ${id}\` to restore the expected symlink(s).`,

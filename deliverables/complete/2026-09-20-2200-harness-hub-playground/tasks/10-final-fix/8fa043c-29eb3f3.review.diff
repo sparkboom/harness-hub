@@ -1,0 +1,159 @@
+diff --git a/flake.nix b/flake.nix
+index 6a631ec..4d95da4 100644
+--- a/flake.nix
++++ b/flake.nix
+@@ -31,13 +31,19 @@
+ 
+       # Cursor headless `agent` CLI via a Community FHS wrapper (spec R5/R9 —
+       # provisional; if this proves unreliable, cursor is detection-only).
+-      cursorFhs = pkgs.buildFHSUserEnv {
+-        name = "cursor-agent-fhs";
+-        targetPkgs = _: with pkgs; [ curl cacert bash ];
+-        runScript = ''
+-          curl -fsSL https://cursor.com/install | bash
+-        '';
+-      };
++      # Linux-only: buildFHSUserEnv does not build on darwin, so on macOS the
++      # cursor agent stays detection-only (shellHook reports NOT INSTALLED),
++      # while on Linux the FHS-wrapped `agent` lands on PATH inside the shell.
++      isLinux = pkgs.stdenv.isLinux;
++      cursorFhs = pkgs.lib.optionals isLinux [
++        (pkgs.buildFHSUserEnv {
++          name = "cursor-agent-fhs";
++          targetPkgs = _: with pkgs; [ curl cacert bash ];
++          runScript = ''
++            curl -fsSL https://cursor.com/install | bash
++          '';
++        })
++      ];
+     in
+     {
+       devShells.${system}.default = pkgs.mkShell {
+@@ -49,7 +55,7 @@
+           (mkNpmHarness "hermes-agent" versions.hermes.version)
+           (mkNpmHarness "@mariozechner/pi-coding-agent" versions.pi.version)
+           (mkNpmHarness "@deepseek-ai/dsh" versions.deepseek.version)
+-        ];
++        ] ++ cursorFhs;
+         shellHook = ''
+           echo "harness-hub playground shell — run \`detect\` to see the pinned harnesses."
+           if command -v agent >/dev/null 2>&1; then
+diff --git a/src/commands/list.test.ts b/src/commands/list.test.ts
+index 6af8efe..5aa8c40 100644
+--- a/src/commands/list.test.ts
++++ b/src/commands/list.test.ts
+@@ -20,4 +20,15 @@ describe('formatList', () => {
+     const positions = expected.map((id) => out.indexOf(id));
+     expect([...positions].sort((a, b) => a - b)).toEqual(positions);
+   });
++
++  it('shows the trust-gate command for hermes and a dash for others', () => {
++    const out = formatList();
++    expect(out).toContain('hermes skills trust');
++    // The header must carry the column and non-gated rows show '-'.
++    expect(out).toContain('TRUST GATE');
++    const hermesLine = out.split('\n').find((line) => line.trimStart().startsWith('hermes'));
++    expect(hermesLine).toContain('hermes skills trust');
++    const cursorLine = out.split('\n').find((line) => line.trimStart().startsWith('cursor'));
++    expect(cursorLine).toContain('-');
++  });
+ });
+diff --git a/src/commands/list.ts b/src/commands/list.ts
+index 13abca6..5afabbf 100644
+--- a/src/commands/list.ts
++++ b/src/commands/list.ts
+@@ -9,16 +9,18 @@ export function formatList(): string {
+   const rows = [...ALL_HARNESS_IDS].sort().map((id) => {
+     const e = getHarnessEntry(id);
+     const skills = e.skills.mode === 'migrate-symlink' ? 'migrate-symlink' : e.skills.mode;
++    const trustGate = e.skills.trustGate ? e.skills.trustGate.trustCommand : '-';
+     return [
+       pad(e.id, 12),
+       pad(e.displayName, 18),
+       pad(e.verifiedVersion, 12),
+       pad(e.agentsDoc.mode, 12),
+-      skills,
++      pad(skills, 12),
++      trustGate,
+     ].join(' ');
+   });
+   return [
+-    `${pad('ID', 12)}${pad('NAME', 18)}${pad('VERSION', 12)}${pad('AGENT DOC', 12)}SKILLS`,
++    `${pad('ID', 12)}${pad('NAME', 18)}${pad('VERSION', 12)}${pad('AGENT DOC', 12)}${pad('SKILLS', 12)}TRUST GATE`,
+     ...rows,
+   ].join('\n');
+ }
+diff --git a/tools/probe.ts b/tools/probe.ts
+index aedb91e..bb731f4 100644
+--- a/tools/probe.ts
++++ b/tools/probe.ts
+@@ -9,22 +9,26 @@ export interface ProbeSpec {
+ // First-cut headless invocations. The four well-documented harnesses use their
+ // scripted modes; hermes/pi/deepseek use their most likely `run`/`-p` forms
+ // and are confirmed by running this tool itself (spec R4 — probe is the
+-// verification aid).
+-export const PROBE_COMMANDS: Record<string, (repoRoot: string) => ProbeSpec> = {
+-  'claude-code': () => ({ cmd: 'claude', args: ['-p', 'List the skills available in this repo and summarize AGENTS.md.'] }),
+-  cursor: (root) => ({ cmd: 'agent', args: ['-p', 'List your skills and summarize AGENTS.md.', '--mode', 'ask', '--trust', '--workspace', root] }),
+-  opencode: () => ({ cmd: 'opencode', args: ['run', 'List the skills available in this repo and summarize AGENTS.md.'] }),
+-  codex: () => ({ cmd: 'codex', args: ['exec', 'List the skills available in this repo and summarize AGENTS.md.'] }),
+-  hermes: () => ({ cmd: 'hermes', args: ['run', 'List the skills available in this repo and summarize AGENTS.md.'] }),
+-  pi: () => ({ cmd: 'pi', args: ['-p', 'List the skills available in this repo and summarize AGENTS.md.'] }),
+-  deepseek: () => ({ cmd: 'dsh', args: ['run', 'List the skills available in this repo and summarize AGENTS.md.'] }),
++// verification aid). Builders receive the binary located by `resolveBinary`
++// so the spawn uses the same executable detection found (e.g. cursor's
++// standalone agent CLI at ~/.local/bin/agent is usually off-PATH).
++export const PROBE_COMMANDS: Record<string, (repoRoot: string, binary: string) => ProbeSpec> = {
++  'claude-code': (_root, binary) => ({ cmd: binary, args: ['-p', 'List the skills available in this repo and summarize AGENTS.md.'] }),
++  cursor: (root, binary) => ({ cmd: binary, args: ['-p', 'List your skills and summarize AGENTS.md.', '--mode', 'ask', '--trust', '--workspace', root] }),
++  opencode: (_root, binary) => ({ cmd: binary, args: ['run', 'List the skills available in this repo and summarize AGENTS.md.'] }),
++  codex: (_root, binary) => ({ cmd: binary, args: ['exec', 'List the skills available in this repo and summarize AGENTS.md.'] }),
++  hermes: (_root, binary) => ({ cmd: binary, args: ['run', 'List the skills available in this repo and summarize AGENTS.md.'] }),
++  pi: (_root, binary) => ({ cmd: binary, args: ['-p', 'List the skills available in this repo and summarize AGENTS.md.'] }),
++  deepseek: (_root, binary) => ({ cmd: binary, args: ['run', 'List the skills available in this repo and summarize AGENTS.md.'] }),
+ };
+ 
+ export type ProbeRunner = (spec: ProbeSpec) => string;
+ 
+ function defaultRunner(spec: ProbeSpec): string {
+   const r = spawnSync(spec.cmd, spec.args, { encoding: 'utf8', stdio: 'inherit', timeout: 120000 });
+-  return r.error ? r.error.message : '';
++  if (r.error) return r.error.message;
++  if (r.status !== 0) return `exited with status ${r.status}`;
++  return '';
+ }
+ 
+ export function probeHarness(
+@@ -40,7 +44,7 @@ export function probeHarness(
+   if (!binary) {
+     return { exitCode: 1, output: `probe: ${id} is not installed (run detect to see the roster).` };
+   }
+-  const spec = make(repoRoot);
++  const spec = make(repoRoot, binary);
+   const err = run(spec);
+   if (err) {
+     return { exitCode: 1, output: `probe: ${id} failed: ${err}` };
+@@ -48,11 +52,23 @@ export function probeHarness(
+   return { exitCode: 0, output: `probe: ${id} ran (${spec.cmd} ${spec.args.join(' ')}).` };
+ }
+ 
++// R9 (controller ruling): probing from outside `nix develop` observes the
++// unpinned host environment. That is allowed but must never happen SILENTLY —
++// warn and continue; do not refuse.
++export function warnIfUnpinned(stderr: (msg: string) => void = console.error): void {
++  if (!process.env.IN_NIX_SHELL) {
++    stderr(
++      'probe: WARNING — not running inside `nix develop`. Observing the unpinned host environment (R9). Run `npm run shell` for pinned harnesses.'
++    );
++  }
++}
++
+ export async function main(argv: string[]): Promise<number> {
+   if (argv.length !== 1) {
+     console.error('Usage: probe <harness-id>');
+     return 1;
+   }
++  warnIfUnpinned();
+   const result = probeHarness(argv[0], process.cwd());
+   if (result.output) console.log(result.output);
+   return result.exitCode;

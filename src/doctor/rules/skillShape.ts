@@ -8,7 +8,7 @@ export const skillShapeRule: DoctorRule = {
     const findings: Finding[] = [];
     for (const entryName of listSkillsRootNonDirEntries(ctx.repoRoot)) {
       findings.push({
-        ruleId: 'skill-shape',
+        ruleId: 'skill-flat-file',
         severity: 'error',
         message: `.agents/skills/${entryName} is not a directory — skills must be laid out as <name>/SKILL.md.`,
         remediation: `Move ${entryName} into its own <skill-name>/SKILL.md directory.`,
@@ -19,7 +19,7 @@ export const skillShapeRule: DoctorRule = {
       const { hasSkillMd } = readSkillFrontmatter(ctx.repoRoot, name);
       if (!hasSkillMd) {
         findings.push({
-          ruleId: 'skill-shape',
+          ruleId: 'skill-missing-skill-md',
           severity: 'error',
           message: `.agents/skills/${name}/ has no SKILL.md.`,
           remediation: `Add .agents/skills/${name}/SKILL.md, or remove the directory if it isn't a skill.`,
