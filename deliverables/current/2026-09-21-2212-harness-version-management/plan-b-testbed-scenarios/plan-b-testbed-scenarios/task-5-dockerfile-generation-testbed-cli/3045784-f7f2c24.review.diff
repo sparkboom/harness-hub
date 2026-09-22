@@ -1,0 +1,41 @@
+# Review package: 3045784..f7f2c24
+
+## Commits
+f7f2c24 docs(testbed): document cursor entry's intentional departure from PROBE_COMMANDS mirroring
+
+## Files changed
+ test/tools/testbed.ts | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+## Diff
+diff --git a/test/tools/testbed.ts b/test/tools/testbed.ts
+index 42235de..cc2f696 100644
+--- a/test/tools/testbed.ts
++++ b/test/tools/testbed.ts
+@@ -43,20 +43,26 @@ export function imageName(id: string): string {
+ 
+ // Prompt-parameterized headless invocations, mirroring PROBE_COMMANDS shapes.
+ export const HEADLESS_COMMANDS: Record<string, (repoRoot: string, prompt: string) => { cmd: string; args: string[] }> = {
+   'claude-code': (_r, p) => ({ cmd: 'claude', args: ['-p', p] }),
+   'cursor-cli': (r, p) => ({ cmd: 'agent', args: ['-p', p, '--mode', 'ask', '--trust', '--workspace', r] }),
+   opencode: (_r, p) => ({ cmd: 'opencode', args: ['run', p] }),
+   codex: (_r, p) => ({ cmd: 'codex', args: ['exec', p] }),
+   hermes: (_r, p) => ({ cmd: 'hermes', args: ['run', p] }),
+   pi: (_r, p) => ({ cmd: 'pi', args: ['-p', p] }),
+   deepseek: (_r, p) => ({ cmd: 'dsh', args: ['run', p] }),
++  // cursor (IDE) is human-only (spec R5) and is never dispatched through the
++  // container runner. This entry documents the in-container agent CLI shape
++  // for completeness but intentionally departs from PROBE_COMMANDS mirroring:
++  // probe's 'cursor' entry (standalone agent CLI with --mode ask --trust
++  // --workspace) is mirrored by the 'cursor-cli' entry above, not this one.
++  // Consequently this entry is never exercised by `testbed run`.
+   cursor: (_r, p) => ({ cmd: 'agent', args: ['-p', p] }),
+ };
+ 
+ export interface DockerExecutor {
+   build(tag: string, contextDir: string): { status: 'ok' | 'failed'; output: string };
+   run(tag: string, mounts: { repoRoot: string; homeDir: string }, command: string): { status: 'ok' | 'failed'; output: string };
+ }
+ 
+ export const dockerExecutor: DockerExecutor = {
+   build(tag, contextDir) {

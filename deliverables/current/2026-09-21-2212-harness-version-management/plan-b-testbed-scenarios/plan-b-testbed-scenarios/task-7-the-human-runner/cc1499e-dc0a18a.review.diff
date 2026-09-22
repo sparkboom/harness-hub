@@ -1,0 +1,95 @@
+# Review package: cc1499e..dc0a18a
+
+## Commits
+dc0a18a feat(verify): human runner for manual GUI/IDE review
+
+## Files changed
+ test/tools/verify/runner-human.test.ts | 20 ++++++++++++++
+ test/tools/verify/runner-human.ts      | 50 ++++++++++++++++++++++++++++++++++
+ 2 files changed, 70 insertions(+)
+
+## Diff
+diff --git a/test/tools/verify/runner-human.test.ts b/test/tools/verify/runner-human.test.ts
+new file mode 100644
+index 0000000..79e3045
+--- /dev/null
++++ b/test/tools/verify/runner-human.test.ts
+@@ -0,0 +1,20 @@
++// test/tools/verify/runner-human.test.ts
++import { describe, it, expect } from 'vitest';
++import { humanRunner } from './runner-human';
++
++describe('humanRunner', () => {
++  it('prints the prompt and waits for the human to signal completion', async () => {
++    let printed = '';
++    const runner = humanRunner({
++      print: (msg) => { printed += msg + '\n'; },
++      ask: async () => 'done',
++    });
++    expect(runner.kind).toBe('human');
++    const res = await runner.run({
++      harnessId: 'cursor', version: '3.x',
++      repoRoot: '/tmp/repo', homeDir: '/tmp/home', prompt: 'Create a spec file.',
++    });
++    expect(res.status).toBe('ok');
++    expect(printed).toContain('Create a spec file.');
++  });
++});
+\ No newline at end of file
+diff --git a/test/tools/verify/runner-human.ts b/test/tools/verify/runner-human.ts
+new file mode 100644
+index 0000000..0274a54
+--- /dev/null
++++ b/test/tools/verify/runner-human.ts
+@@ -0,0 +1,50 @@
++// test/tools/verify/runner-human.ts
++//
++// The `human` Runner: for harnesses that are human-only (e.g. cursor, per
++// spec R5), this runner prints the scenario prompt and waits for the human
++// operator to signal they have acted in the GUI/IDE before snapshots are
++// taken and the predicate is evaluated.
++//
++// `io` is injectable so tests never touch real stdin; the default io()
++// prompts on the process's stdio.
++//
++// Task 4 ruling: Runner.run implementations must never throw — unexpected
++// failures are converted into a failed RunResult so runScenario's
++// snapshot/predicate pipeline still completes.
++
++import { createInterface } from 'node:readline';
++import type { Runner, RunContext, RunResult } from './runner';
++
++export interface HumanIO {
++  print(msg: string): void;
++  ask(question: string): Promise<string>;
++}
++
++function stdinIO(): HumanIO {
++  const rl = createInterface({ input: process.stdin, output: process.stdout });
++  return {
++    print: (msg) => console.log(msg),
++    ask: (q) => new Promise((resolve) => rl.question(q + ' ', (a) => resolve(a))),
++  };
++}
++
++export function humanRunner(io: HumanIO = stdinIO()): Runner {
++  return {
++    kind: 'human',
++    async run(ctx: RunContext): Promise<RunResult> {
++      try {
++        io.print(`\n=== human runner — ${ctx.harnessId} ${ctx.version} ===`);
++        io.print('Repo: ' + ctx.repoRoot);
++        io.print('\nPaste this prompt into the harness UI/IDE:');
++        io.print('----');
++        io.print(ctx.prompt);
++        io.print('----');
++        await io.ask('Once the harness has acted, type "done" and press Enter:');
++        return { status: 'ok', output: 'human signaled completion' };
++      } catch (e) {
++        // Task 4 ruling: never throw out of run(); surface as a failed RunResult.
++        return { status: 'failed', output: '', error: e instanceof Error ? e.message : String(e) };
++      }
++    },
++  };
++}
+\ No newline at end of file

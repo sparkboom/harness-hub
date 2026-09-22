@@ -1,0 +1,365 @@
+# Review package: 3dc7724..75d4ff2
+
+## Commits
+75d4ff2 fix(verify): symlink setup guard, container-aware trust-gate predicate, hermetic reconcile test, empty-prompt dispatch guard
+
+## Files changed
+ test/tools/reconcile.test.ts              | 12 +++++-
+ test/tools/verify/containerRunner.test.ts | 17 ++++++++
+ test/tools/verify/containerRunner.ts      |  6 +++
+ test/tools/verify/runner.test.ts          | 65 +++++++++++++++++++++++++++++++
+ test/tools/verify/runner.ts               |  5 ++-
+ test/tools/verify/scenarios.test.ts       | 30 ++++++++++++++
+ test/tools/verify/scenarios.ts            | 15 +++++--
+ test/tools/verify/schema.ts               |  4 +-
+ 8 files changed, 147 insertions(+), 7 deletions(-)
+
+## Diff
+diff --git a/test/tools/reconcile.test.ts b/test/tools/reconcile.test.ts
+index 9338cb1..5d71ed6 100644
+--- a/test/tools/reconcile.test.ts
++++ b/test/tools/reconcile.test.ts
+@@ -11,24 +11,34 @@ describe('isCoveredByVerified', () => {
+   it('returns true when latest is inside a verified range', () => {
+     expect(isCoveredByVerified('0.150.0', ranges)).toBe(true);
+   });
+   it('returns false when latest is outside all verified ranges', () => {
+     expect(isCoveredByVerified('0.155.1', ranges)).toBe(false);
+   });
+ });
+ 
+ describe('checkLatest', () => {
+   it('exits non-zero when any harness latest is outside verified ranges', async () => {
++    // Explicit fixture entries — no live config/config.json reads in tests.
++    const entries: Record<string, ManifestVersionEntry> = {
++      codex: {
++        displayName: 'Codex', install: { method: 'npm', package: '@openai/codex' },
++        ranges: [{ profile: 'native-v1', min: '0.139.0', max: '0.155.0', status: 'verified' }],
++      },
++    };
+     const resolver: UpstreamResolver = { latest: async () => '0.155.1' };
+-    const res = await checkLatest(resolver);
++    const res = await checkLatest(resolver, entries);
+     // codex latest 0.155.1 is outside its verified range (0.139.0–0.155.0)
+     expect(res.exitCode).toBe(1);
++    expect(res.rows).toEqual([
++      { id: 'codex', latest: '0.155.1', covered: false },
++    ]);
+   });
+ 
+   it('does not crash when an entry has missing or empty ranges (drift)', async () => {
+     const entries: Record<string, ManifestVersionEntry> = {
+       'no-ranges': { displayName: 'No Ranges', install: { method: 'npm', package: 'x' }, ranges: [] },
+       'ranges-undefined': { displayName: 'Ranges Undefined', install: { method: 'npm', package: 'y' } } as ManifestVersionEntry,
+     };
+     const res = await checkLatest({ latest: async () => '1.2.3' }, entries);
+     expect(res.rows.every((r) => !r.covered)).toBe(true);
+     expect(res.exitCode).toBe(1);
+diff --git a/test/tools/verify/containerRunner.test.ts b/test/tools/verify/containerRunner.test.ts
+index 31987f1..5df64e2 100644
+--- a/test/tools/verify/containerRunner.test.ts
++++ b/test/tools/verify/containerRunner.test.ts
+@@ -8,11 +8,28 @@ describe('containerRunner', () => {
+       build: () => ({ status: 'ok', output: '' }),
+       run: () => ({ status: 'ok', output: 'done' }),
+     });
+     expect(runner.kind).toBe('container');
+     const res = await runner.run({
+       harnessId: 'codex', version: '0.155.1',
+       repoRoot: '/tmp/repo', homeDir: '/tmp/home', prompt: 'x',
+     });
+     expect(res.status).toBe('ok');
+   });
++
++  it('skips dispatch for an empty prompt and never calls the executor', async () => {
++    let calls = 0;
++    const runner = containerRunner({
++      build: () => { calls += 1; return { status: 'ok', output: '' }; },
++      run: () => { calls += 1; return { status: 'ok', output: 'done' }; },
++    });
++    const res = await runner.run({
++      harnessId: 'codex', version: '0.155.1',
++      repoRoot: '/tmp/repo', homeDir: '/tmp/home', prompt: '',
++    });
++    expect(res).toEqual({
++      status: 'ok',
++      output: 'no prompt — deterministic scenario, container dispatch skipped',
++    });
++    expect(calls).toBe(0);
++  });
+ });
+\ No newline at end of file
+diff --git a/test/tools/verify/containerRunner.ts b/test/tools/verify/containerRunner.ts
+index 0f32fc7..e2ad019 100644
+--- a/test/tools/verify/containerRunner.ts
++++ b/test/tools/verify/containerRunner.ts
+@@ -11,20 +11,26 @@ import { mkdtempSync } from 'node:fs';
+ import { tmpdir } from 'node:os';
+ import { join } from 'node:path';
+ import type { Runner, RunContext, RunResult } from './runner';
+ import { buildImage, runHarness, type DockerExecutor } from '../testbed';
+ 
+ export function containerRunner(exec?: DockerExecutor): Runner {
+   const executor = exec;
+   return {
+     kind: 'container',
+     async run(ctx: RunContext): Promise<RunResult> {
++      // Empty prompt = deterministic scenario (e.g. skill-wiring): there is
++      // nothing for the harness to do, and dispatching `claude -p ""` produces
++      // garbage runs. Skip build/run entirely.
++      if (ctx.prompt === '') {
++        return { status: 'ok', output: 'no prompt — deterministic scenario, container dispatch skipped' };
++      }
+       try {
+         const workDir = mkdtempSync(join(tmpdir(), 'hh-testbed-'));
+         const built = buildImage({ harness: ctx.harnessId, version: ctx.version, workDir, exec: executor });
+         if (built.result.status !== 'ok') {
+           return { status: 'failed', output: built.result.output, error: `docker build failed for ${built.tag}` };
+         }
+         const r = runHarness({
+           harness: ctx.harnessId, version: ctx.version, prompt: ctx.prompt,
+           repoRoot: ctx.repoRoot, homeDir: ctx.homeDir, workDir, exec: executor,
+         });
+diff --git a/test/tools/verify/runner.test.ts b/test/tools/verify/runner.test.ts
+index 4729f69..d195425 100644
+--- a/test/tools/verify/runner.test.ts
++++ b/test/tools/verify/runner.test.ts
+@@ -1,17 +1,18 @@
+ // test/tools/verify/runner.test.ts
+ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+ import { mkdtempSync, rmSync } from 'node:fs';
+ import { tmpdir } from 'node:os';
+ import { join } from 'node:path';
+ import { runScenario, type Runner, type RunContext } from './runner';
+ import { SCENARIO_SUITE } from './scenarios';
++import type { Scenario } from './schema';
+ 
+ describe('runScenario', () => {
+   let repoRoot: string;
+   let homeDir: string;
+   beforeEach(() => {
+     repoRoot = mkdtempSync(join(tmpdir(), 'hh-repo-'));
+     homeDir = mkdtempSync(join(tmpdir(), 'hh-home-'));
+   });
+   afterEach(() => {
+     rmSync(repoRoot, { recursive: true, force: true });
+@@ -53,11 +54,75 @@ describe('runScenario', () => {
+     // while note records the failed-run diagnostics.
+     const outcome = await runScenario(SCENARIO_SUITE['skill-wiring'], runner, {
+       harnessId: 'codex', version: '0.155.1', repoRoot, homeDir,
+       prompt: SCENARIO_SUITE['skill-wiring'].prompt,
+     });
+     expect(outcome.result).toBe(true);
+     expect(outcome.passes).toBe(1);
+     expect(outcome.runs).toBe(1);
+     expect(outcome.note).toBe('spawn ENOENT');
+   });
++
++  it('captures a symlink setup file end-to-end: writeSetup, snapshot, predicate', async () => {
++    // Inline fake scenario (not SCENARIO_SUITE) closing the Task-4 deferred
++    // minor: the symlink branch of writeSetup was never exercised end-to-end.
++    // Link-dir-relative target (the documented skill-wiring pattern) plus a
++    // native file, no-op runner, predicate asserting both.
++    const scenario: Scenario = {
++      id: 'symlink-setup-roundtrip',
++      conventionUnderTest: 'skills',
++      harnessCompat: ['codex'],
++      setup: {
++        files: [
++          {
++            path: '.agents/skills/writing-tests/SKILL.md',
++            content: '---\nname: writing-tests\ndescription: Write failing tests first.\n---\n',
++          },
++          {
++            path: '.claude/skills/writing-tests',
++            kind: 'symlink',
++            symlinkTarget: '../../.agents/skills/writing-tests',
++          },
++        ],
++      },
++      prompt: '',
++      predicate: (ctx) => {
++        const native = ctx.repo.files['.agents/skills/writing-tests/SKILL.md'];
++        const link = ctx.repo.files['.claude/skills/writing-tests'];
++        if (!native || native.type !== 'file') {
++          return { pass: false, reason: 'native .agents/skills/skills file missing' };
++        }
++        if (!link || link.type !== 'symlink') {
++          return { pass: false, reason: '.claude/skills symlink not captured in snapshot' };
++        }
++        if (link.target !== '../../.agents/skills/writing-tests') {
++          return { pass: false, reason: `symlink target not stored as given: ${String(link.target)}` };
++        }
++        return { pass: true, reason: 'native file present and symlink entry captured with target' };
++      },
++      evidenceLevels: ['deterministic'],
++    };
++    const runner: Runner = { kind: 'container', run: async () => ({ status: 'ok', output: '' }) };
++    const outcome = await runScenario(scenario, runner, {
++      harnessId: 'codex', version: '0.155.1', repoRoot, homeDir,
++      prompt: scenario.prompt,
++    });
++    expect(outcome.result).toBe(true);
++    expect(outcome.reason).toBe('native file present and symlink entry captured with target');
++  });
++
++  it('rejects a symlink setup file without symlinkTarget with a clear error', async () => {
++    const scenario: Scenario = {
++      id: 'symlink-missing-target',
++      conventionUnderTest: 'skills',
++      harnessCompat: ['codex'],
++      setup: { files: [{ path: '.claude/skills/writing-tests', kind: 'symlink' }] },
++      prompt: '',
++      predicate: () => ({ pass: true, reason: 'unreachable — setup must fail first' }),
++      evidenceLevels: ['deterministic'],
++    };
++    const runner: Runner = { kind: 'container', run: async () => ({ status: 'ok', output: '' }) };
++    await expect(runScenario(scenario, runner, {
++      harnessId: 'codex', version: '0.155.1', repoRoot, homeDir, prompt: '',
++    })).rejects.toThrow('setup: symlink at ".claude/skills/writing-tests" requires symlinkTarget');
++  });
+ });
+\ No newline at end of file
+diff --git a/test/tools/verify/runner.ts b/test/tools/verify/runner.ts
+index b804415..da3cb33 100644
+--- a/test/tools/verify/runner.ts
++++ b/test/tools/verify/runner.ts
+@@ -30,23 +30,26 @@ export interface RunResult {
+ export interface Runner {
+   kind: 'container' | 'human';
+   run(ctx: RunContext): Promise<RunResult>;
+ }
+ 
+ function writeSetup(repoRoot: string, homeDir: string, files: SetupFile[]): void {
+   mkdirSync(repoRoot, { recursive: true });
+   mkdirSync(homeDir, { recursive: true });
+   for (const f of files) {
+     if (f.kind === 'symlink') {
++      if (!f.symlinkTarget) {
++        throw new Error(`setup: symlink at "${f.path}" requires symlinkTarget`);
++      }
+       const target = join(repoRoot, f.path);
+       mkdirSync(dirname(target), { recursive: true });
+-      symlinkSync(f.symlinkTarget ?? '', target);
++      symlinkSync(f.symlinkTarget, target);
+     } else {
+       writeAssets(repoRoot, [{ path: f.path, content: f.content ?? '' }]);
+     }
+   }
+ }
+ 
+ export async function runScenario(
+   scenario: Scenario,
+   runner: Runner,
+   ctx: RunContext
+diff --git a/test/tools/verify/scenarios.test.ts b/test/tools/verify/scenarios.test.ts
+index 023595b..fbd0ca9 100644
+--- a/test/tools/verify/scenarios.test.ts
++++ b/test/tools/verify/scenarios.test.ts
+@@ -20,11 +20,41 @@ describe('scenario suite', () => {
+ 
+   it('splits skill discovery into the wiring/explicit/auto trio', () => {
+     expect(SCENARIO_SUITE['skill-wiring'].evidenceLevels).toContain('deterministic');
+     expect(SCENARIO_SUITE['skill-explicit-invocation'].evidenceLevels).toContain('canary');
+     expect(SCENARIO_SUITE['skill-auto-discovery'].evidenceLevels).toContain('canary');
+   });
+ 
+   it('restricts skill-scoping to the documented harnesses', () => {
+     expect(SCENARIO_SUITE['skill-scoping'].harnessCompat).toEqual(['cursor', 'cursor-cli', 'opencode']);
+   });
++
++  describe('hermes-trust-gate predicate', () => {
++    const predicate = SCENARIO_SUITE['hermes-trust-gate'].predicate;
++    const mkCtx = (ledger: string) => ({
++      repoRoot: '/Users/x/proj',
++      homeDir: '/Users/x/home',
++      repo: { files: {} },
++      home: { files: { '.hermes/config.yaml': { type: 'file' as const, content: ledger } } },
++      beforeRepo: { files: {} },
++      beforeHome: { files: {} },
++    });
++
++    it('passes when the ledger contains the container mount path /repo', () => {
++      expect(predicate(mkCtx('trusted:\n  - /repo\n'))).toEqual({
++        pass: true,
++        reason: 'trust ledger gained the container mount path /repo',
++      });
++    });
++
++    it('passes when the ledger contains the repo root (human-mode case)', () => {
++      expect(predicate(mkCtx('trusted:\n  - /Users/x/proj\n'))).toEqual({
++        pass: true,
++        reason: 'trust ledger gained the repo path',
++      });
++    });
++
++    it('fails when the ledger contains neither path', () => {
++      expect(predicate(mkCtx('trusted:\n  - /elsewhere\n')).pass).toBe(false);
++    });
++  });
+ });
+\ No newline at end of file
+diff --git a/test/tools/verify/scenarios.ts b/test/tools/verify/scenarios.ts
+index 116df08..5da4a5b 100644
+--- a/test/tools/verify/scenarios.ts
++++ b/test/tools/verify/scenarios.ts
+@@ -144,18 +144,25 @@ export const SCENARIO_SUITE: Record<string, Scenario> = {
+ 
+   'hermes-trust-gate': {
+     id: 'hermes-trust-gate',
+     conventionUnderTest: 'trustGate',
+     harnessCompat: ['hermes'],
+     setup: { files: [{ path: `.agents/skills/${ZEBRA_SKILL}/SKILL.md`, content: zebraSkillBody() }], canary: COD_CANARY },
+     prompt: `Use the ${ZEBRA_SKILL} skill.`,
+     predicate: (ctx) => {
+       const cfg = ctx.home.files['.hermes/config.yaml'];
+       if (!cfg || cfg.type !== 'file') return { pass: false, reason: '~/.hermes/config.yaml not written' };
+-      const trusted = (cfg.content ?? '').includes(ctx.repoRoot);
+-      return trusted
+-        ? { pass: true, reason: 'trust ledger gained the repo path' }
+-        : { pass: false, reason: 'repo path not found in trust ledger' };
++      // The trust ledger records the repo path as the harness saw it: the host
++      // path in human mode, or the container mount path (/repo) in
++      // container-mode runs. Accept either.
++      const content = cfg.content ?? '';
++      if (content.includes(ctx.repoRoot)) {
++        return { pass: true, reason: 'trust ledger gained the repo path' };
++      }
++      if (content.includes('/repo')) {
++        return { pass: true, reason: 'trust ledger gained the container mount path /repo' };
++      }
++      return { pass: false, reason: 'repo path not found in trust ledger' };
+     },
+     evidenceLevels: ['behavioral'],
+   },
+ };
+\ No newline at end of file
+diff --git a/test/tools/verify/schema.ts b/test/tools/verify/schema.ts
+index a2c1156..6025f9e 100644
+--- a/test/tools/verify/schema.ts
++++ b/test/tools/verify/schema.ts
+@@ -24,21 +24,23 @@ export interface SetupFile {
+   content?: string;
+   kind?: 'file' | 'symlink';
+   /** Required when kind === 'symlink': the link target (relative or absolute). */
+   symlinkTarget?: string;
+ }
+ 
+ export interface FileEntry {
+   type: 'file' | 'symlink';
+   /** File content (small repos; full text, not hashed — scenarios are tiny). */
+   content?: string;
+-  /** Symlink target. */
++  /** Symlink target. Stored as given when relative (link-dir-relative like
++   *  '../../x' or '/abs/target' as written in the link); snapshot() normalizes
++   *  absolute targets to be snapshot-root-relative. */
+   target?: string;
+ }
+ 
+ export interface Snapshot {
+   /** path → entry, paths relative to the snapshot root. */
+   files: Record<string, FileEntry>;
+ }
+ 
+ export interface ScenarioContext {
+   repoRoot: string;

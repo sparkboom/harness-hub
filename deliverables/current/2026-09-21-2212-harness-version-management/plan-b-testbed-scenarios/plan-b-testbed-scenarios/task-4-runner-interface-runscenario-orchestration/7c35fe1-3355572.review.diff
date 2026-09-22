@@ -1,0 +1,83 @@
+# Review package: 7c35fe1..3355572
+
+## Commits
+3355572 fix(verify): runScenario survives a throwing runner
+
+## Files changed
+ test/tools/verify/runner.test.ts | 20 ++++++++++++++++++++
+ test/tools/verify/runner.ts      | 10 +++++++++-
+ 2 files changed, 29 insertions(+), 1 deletion(-)
+
+## Diff
+diff --git a/test/tools/verify/runner.test.ts b/test/tools/verify/runner.test.ts
+index 8291bd0..4729f69 100644
+--- a/test/tools/verify/runner.test.ts
++++ b/test/tools/verify/runner.test.ts
+@@ -33,11 +33,31 @@ describe('runScenario', () => {
+   });
+ 
+   it('records a failed predicate as result false', async () => {
+     const runner: Runner = { kind: 'container', run: async () => ({ status: 'ok', output: '' }) };
+     const outcome = await runScenario(SCENARIO_SUITE['agentsdoc-load-canary'], runner, {
+       harnessId: 'codex', version: '0.155.1', repoRoot, homeDir,
+       prompt: SCENARIO_SUITE['agentsdoc-load-canary'].prompt,
+     });
+     expect(outcome.result).toBe(false);
+   });
++
++  it('survives a throwing runner: still snapshots, evaluates the predicate, and carries the error as note', async () => {
++    const runner: Runner = {
++      kind: 'container',
++      run: async () => {
++        throw new Error('spawn ENOENT');
++      },
++    };
++    // skill-wiring has a deterministic-pass predicate over post-run snapshots;
++    // the pipeline must continue past the rejected run, so result is true
++    // while note records the failed-run diagnostics.
++    const outcome = await runScenario(SCENARIO_SUITE['skill-wiring'], runner, {
++      harnessId: 'codex', version: '0.155.1', repoRoot, homeDir,
++      prompt: SCENARIO_SUITE['skill-wiring'].prompt,
++    });
++    expect(outcome.result).toBe(true);
++    expect(outcome.passes).toBe(1);
++    expect(outcome.runs).toBe(1);
++    expect(outcome.note).toBe('spawn ENOENT');
++  });
+ });
+\ No newline at end of file
+diff --git a/test/tools/verify/runner.ts b/test/tools/verify/runner.ts
+index c077fc1..b804415 100644
+--- a/test/tools/verify/runner.ts
++++ b/test/tools/verify/runner.ts
+@@ -48,21 +48,29 @@ function writeSetup(repoRoot: string, homeDir: string, files: SetupFile[]): void
+ 
+ export async function runScenario(
+   scenario: Scenario,
+   runner: Runner,
+   ctx: RunContext
+ ): Promise<ScenarioOutcome> {
+   writeSetup(ctx.repoRoot, ctx.homeDir, scenario.setup.files);
+   const beforeRepo = snapshot(ctx.repoRoot);
+   const beforeHome = snapshot(ctx.homeDir);
+ 
+-  const result = await runner.run(ctx);
++  // A throwing runner (spawn ENOENT, container timeout) must not abort the
++  // pipeline: record the failure and continue to snapshots/predicate so the
++  // outcome still records the failed run. Non-throwing behavior unchanged.
++  let result: RunResult;
++  try {
++    result = await runner.run(ctx);
++  } catch (e) {
++    result = { status: 'failed', output: '', error: e instanceof Error ? e.message : String(e) };
++  }
+ 
+   const afterRepo = snapshot(ctx.repoRoot);
+   const afterHome = snapshot(ctx.homeDir);
+   const scenarioCtx: ScenarioContext = {
+     repoRoot: ctx.repoRoot, homeDir: ctx.homeDir,
+     repo: afterRepo, home: afterHome, beforeRepo, beforeHome,
+   };
+   const pr = scenario.predicate(scenarioCtx);
+   return {
+     scenarioId: scenario.id,

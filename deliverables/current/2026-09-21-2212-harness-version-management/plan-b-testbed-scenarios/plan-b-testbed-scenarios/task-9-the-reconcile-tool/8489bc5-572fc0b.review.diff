@@ -1,0 +1,211 @@
+# Review package: 8489bc5..572fc0b
+
+## Commits
+572fc0b fix(reconcile): guard empty ranges and fail loudly on upstream errors
+
+## Files changed
+ test/tools/reconcile.test.ts | 27 +++++++++++++++++++++++-
+ test/tools/reconcile.ts      | 50 +++++++++++++++++++++++++++++++++++---------
+ 2 files changed, 66 insertions(+), 11 deletions(-)
+
+## Diff
+diff --git a/test/tools/reconcile.test.ts b/test/tools/reconcile.test.ts
+index 44a4ed0..9338cb1 100644
+--- a/test/tools/reconcile.test.ts
++++ b/test/tools/reconcile.test.ts
+@@ -1,13 +1,14 @@
+ // test/tools/reconcile.test.ts
+ import { describe, it, expect } from 'vitest';
+-import { checkLatest, isCoveredByVerified, type UpstreamResolver } from './reconcile';
++import { checkLatest, formatCheck, isCoveredByVerified, type UpstreamResolver } from './reconcile';
++import type { ManifestVersionEntry } from './manifest';
+ 
+ describe('isCoveredByVerified', () => {
+   const ranges = [
+     { profile: 'native-v1', min: '0.139.0', max: '0.155.0', status: 'verified' as const },
+     { profile: 'native-v1', min: '0.155.0', max: null, status: 'unverified' as const },
+   ];
+   it('returns true when latest is inside a verified range', () => {
+     expect(isCoveredByVerified('0.150.0', ranges)).toBe(true);
+   });
+   it('returns false when latest is outside all verified ranges', () => {
+@@ -15,11 +16,35 @@ describe('isCoveredByVerified', () => {
+   });
+ });
+ 
+ describe('checkLatest', () => {
+   it('exits non-zero when any harness latest is outside verified ranges', async () => {
+     const resolver: UpstreamResolver = { latest: async () => '0.155.1' };
+     const res = await checkLatest(resolver);
+     // codex latest 0.155.1 is outside its verified range (0.139.0–0.155.0)
+     expect(res.exitCode).toBe(1);
+   });
++
++  it('does not crash when an entry has missing or empty ranges (drift)', async () => {
++    const entries: Record<string, ManifestVersionEntry> = {
++      'no-ranges': { displayName: 'No Ranges', install: { method: 'npm', package: 'x' }, ranges: [] },
++      'ranges-undefined': { displayName: 'Ranges Undefined', install: { method: 'npm', package: 'y' } } as ManifestVersionEntry,
++    };
++    const res = await checkLatest({ latest: async () => '1.2.3' }, entries);
++    expect(res.rows.every((r) => !r.covered)).toBe(true);
++    expect(res.exitCode).toBe(1);
++  });
++
++  it('reports a per-row upstream error (exit 2, no crash)', async () => {
++    const entries: Record<string, ManifestVersionEntry> = {
++      'some-harness': {
++        displayName: 'Some Harness', install: { method: 'npm', package: 'pkg' },
++        ranges: [{ profile: 'native-v1', min: '1.0.0', max: null, status: 'verified' }],
++      },
++    };
++    const res = await checkLatest({ latest: async () => { throw new Error('npm down'); } }, entries);
++    expect(res.exitCode).toBe(2);
++    expect(res.rows[0].error).toBe('npm down');
++    expect(res.rows[0].covered).toBe(false);
++    expect(formatCheck(res.rows)).toContain('ERR');
++  });
+ });
+\ No newline at end of file
+diff --git a/test/tools/reconcile.ts b/test/tools/reconcile.ts
+index a725dab..5f0f944 100644
+--- a/test/tools/reconcile.ts
++++ b/test/tools/reconcile.ts
+@@ -1,58 +1,80 @@
+ import { spawnSync } from 'node:child_process';
+ import { readFileSync, writeFileSync } from 'node:fs';
+ import { gte, lt, valid, coerce } from 'semver';
+-import { loadVersionEntries, MANIFEST_PATH, type ManifestRange } from './manifest';
++import { loadVersionEntries, MANIFEST_PATH, type ManifestRange, type ManifestVersionEntry } from './manifest';
+ 
+ export function isCoveredByVerified(latest: string, ranges: ManifestRange[]): boolean {
+   const v = valid(latest) ?? coerce(latest)?.version;
+   if (!v) return false;
+   return ranges.some((r) => r.status === 'verified' && gte(v, r.min) && (r.max === null || lt(v, r.max)));
+ }
+ 
+ export interface UpstreamResolver {
+   latest(id: string): Promise<string | null>;
+ }
+ 
+ export const npmUpstream: UpstreamResolver = {
+   latest(id: string) {
+     const entry = loadVersionEntries()[id];
+     const pkg = entry?.install.package;
+     if (!pkg) return Promise.resolve(null);
+     const r = spawnSync('npm', ['view', pkg, 'version'], { encoding: 'utf8', timeout: 30000 });
++    // null means only "no package configured". A failed npm invocation is an
++    // infrastructure error — throw so --check fails loudly instead of reading
++    // the empty stdout as "no upstream version, therefore covered".
++    if (r.error) throw new Error(`reconcile: npm view failed for ${pkg}: ${r.error.message}`);
++    if (r.status !== 0) throw new Error(`reconcile: npm view failed for ${pkg}: ${(r.stderr ?? '').trim()}`);
+     const line = (r.stdout ?? '').split('\n')[0].trim();
+     return Promise.resolve(line || null);
+   },
+ };
+ 
+ export interface CheckRow {
+   id: string;
+   latest: string | null;
+   covered: boolean;
++  error?: string;
+ }
+ 
+-export async function checkLatest(resolver: UpstreamResolver = npmUpstream): Promise<{ rows: CheckRow[]; exitCode: number }> {
+-  const entries = loadVersionEntries();
++export async function checkLatest(
++  resolver: UpstreamResolver = npmUpstream,
++  entries: Record<string, ManifestVersionEntry> = loadVersionEntries(),
++): Promise<{ rows: CheckRow[]; exitCode: number }> {
+   const rows: CheckRow[] = [];
+   for (const id of Object.keys(entries).sort()) {
+-    const latest = await resolver.latest(id);
+-    const covered = latest === null ? true : isCoveredByVerified(latest, entries[id].ranges);
+-    rows.push({ id, latest, covered });
++    let latest: string | null = null;
++    let error: string | undefined;
++    try {
++      latest = await resolver.latest(id);
++    } catch (err) {
++      error = err instanceof Error ? err.message : String(err);
++    }
++    // Missing/empty ranges: nothing is verified — honest answer is drift.
++    let covered: boolean;
++    if (error !== undefined) covered = false;
++    else if (latest === null) covered = true; // no package configured — nothing to drift
++    else covered = isCoveredByVerified(latest, entries[id].ranges ?? []);
++    rows.push({ id, latest, covered, ...(error !== undefined ? { error } : {}) });
+   }
++  const errored = rows.some((r) => r.error !== undefined);
++  if (errored) return { rows, exitCode: 2 };
+   const drift = rows.some((r) => !r.covered);
+   return { rows, exitCode: drift ? 1 : 0 };
+ }
+ 
+ export function formatCheck(rows: CheckRow[]): string {
+   const pad = (s: string, w: number) => (s.length >= w ? s : s + ' '.repeat(w - s.length));
+   const lines = [pad('ID', 16) + pad('LATEST', 14) + 'COVERED'];
+-  for (const r of rows) lines.push(pad(r.id, 16) + pad(r.latest ?? '?', 14) + (r.covered ? 'yes' : 'NO'));
++  for (const r of rows) {
++    lines.push(pad(r.id, 16) + pad(r.latest ?? '?', 14) + (r.error !== undefined ? 'ERR' : r.covered ? 'yes' : 'NO'));
++  }
+   return lines.join('\n');
+ }
+ 
+ // Only mutation path for config.json. Flips an unverified range to verified, or
+ // adds a new verified range when the version matches none.
+ export function recordReview(harness: string, version: string): { changed: boolean; message: string } {
+   const path = MANIFEST_PATH;
+   const raw = JSON.parse(readFileSync(path, 'utf8')) as { harness: { versions: Record<string, { ranges: ManifestRange[] }> } };
+   const entry = raw.harness.versions[harness];
+   if (!entry) throw new Error(`reconcile: unknown harness "${harness}"`);
+@@ -61,39 +83,47 @@ export function recordReview(harness: string, version: string): { changed: boole
+ 
+   let changed = false;
+   const existing = entry.ranges.find((r) => gte(v, r.min) && (r.max === null || lt(v, r.max)));
+   if (existing) {
+     if (existing.status === 'unverified') {
+       existing.status = 'verified';
+       existing.verifiedDate = new Date().toISOString().slice(0, 10);
+       changed = true;
+     }
+   } else {
++    if (entry.ranges.length === 0) {
++      throw new Error(`reconcile: harness "${harness}" has no ranges to derive a profile from`);
++    }
+     // New range: insert after the last range whose min <= v, keeping order.
+     entry.ranges.push({ profile: entry.ranges[entry.ranges.length - 1].profile, min: v, max: null, status: 'verified', verifiedDate: new Date().toISOString().slice(0, 10) });
+     entry.ranges.sort((a, b) => (a.min < b.min ? -1 : 1));
+     changed = true;
+   }
+ 
+   if (changed) {
+     writeFileSync(path, JSON.stringify(raw, null, 2) + '\n', 'utf8');
+     return { changed: true, message: `recorded ${harness} ${v} as verified` };
+   }
+   return { changed: false, message: `${harness} ${v} is already verified — no change` };
+ }
+ 
+ export async function main(argv: string[]): Promise<number> {
+   const [cmd, ...rest] = argv;
+   if (cmd === '--check') {
+-    const res = await checkLatest();
+-    console.log(formatCheck(res.rows));
+-    return res.exitCode;
++    try {
++      const res = await checkLatest();
++      console.log(formatCheck(res.rows));
++      return res.exitCode;
++    } catch (err) {
++      console.error(`reconcile: upstream check failed: ${err instanceof Error ? err.message : String(err)}`);
++      return 2;
++    }
+   }
+   if (cmd === '--record' && rest[0]) {
+     try {
+       const out = recordReview(rest[0], rest[1] ?? '');
+       console.log(out.message);
+       return 0;
+     } catch (err) {
+       console.error(err instanceof Error ? err.message : String(err));
+       return 1;
+     }
