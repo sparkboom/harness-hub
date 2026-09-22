@@ -1,6 +1,7 @@
 export const ALL_HARNESS_IDS = [
   'claude-code',
   'cursor',
+  'cursor-cli',
   'opencode',
   'codex',
   'hermes',
