@@ -2,7 +2,15 @@ import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { loadManifest } from './manifest';
+import { loadManifest, UNPINNED, type VersionRange } from './manifest';
+
+// Pin derivation mirrors src/registry/data.ts's registry rule: the newest
+// `verified` range's max (or min when the range is open-ended, max === null).
+export function derivedPin(ranges: VersionRange[]): string {
+  const verified = ranges.filter((r) => r.status === 'verified').at(-1);
+  if (!verified) return UNPINNED;
+  return verified.max ?? verified.min;
+}
 
 export interface DetectRow {
   id: string;
@@ -65,7 +73,7 @@ export function detectWith(runner: VersionRunner = runVersion): DetectRow[] {
       return {
         id,
         displayName: manifest[id].displayName,
-        pin: manifest[id].verifiedVersion ?? 'unpinned',
+        pin: derivedPin(manifest[id].ranges),
         installed,
       };
     });
