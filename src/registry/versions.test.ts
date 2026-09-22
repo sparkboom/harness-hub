@@ -1,40 +1,57 @@
+// src/registry/versions.test.ts (rewrite)
 import { describe, it, expect } from 'vitest';
 import { ALL_HARNESS_IDS } from '../harnesses';
-import { loadVersionsManifest } from './versions';
-import { getHarnessEntry } from './index';
+import { assertValidRangeBounds, loadVersionsManifest } from './versions';
+import { CONVENTION_PROFILES } from './profiles';
 
 describe('harness versions manifest', () => {
   it('has an entry for every recognized harness id', () => {
-    const manifest = loadVersionsManifest();
-    expect(Object.keys(manifest).sort()).toEqual([...ALL_HARNESS_IDS].sort());
+    expect(Object.keys(loadVersionsManifest()).sort()).toEqual([...ALL_HARNESS_IDS].sort());
   });
 
-  it('registers each harness version as a non-empty string', () => {
-    const manifest = loadVersionsManifest();
+  it('gives every harness at least one range with a known profile', () => {
+    const m = loadVersionsManifest();
     for (const id of ALL_HARNESS_IDS) {
-      expect(manifest[id].version).toBeTruthy();
-      expect(manifest[id].verifiedDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(m[id].ranges.length).toBeGreaterThan(0);
+      for (const r of m[id].ranges) {
+        expect(CONVENTION_PROFILES[r.profile]).toBeDefined();
+        expect(r.status).toMatch(/^(verified|unverified)$/);
+      }
     }
   });
 
-  it('derives the registry verifiedVersion from the manifest (no drift)', () => {
-    const manifest = loadVersionsManifest();
-    for (const id of ALL_HARNESS_IDS) {
-      expect(getHarnessEntry(id).verifiedVersion).toBe(manifest[id].version);
-      expect(getHarnessEntry(id).verifiedDate).toBe(manifest[id].verifiedDate);
-    }
-  });
-
-  it('pins claude-code to the researched 2.1.272 (not "unpinned")', () => {
-    expect(loadVersionsManifest()['claude-code'].version).toBe('2.1.272');
-  });
-
-  it('marks cursor install as fhs-wrapper and every other harness as npm', () => {
+  it('keeps cursor and cursor-cli as fhs-wrapper, every npm harness as npm', () => {
     const m = loadVersionsManifest();
     expect(m.cursor.install.method).toBe('fhs-wrapper');
-    for (const id of ALL_HARNESS_IDS) {
-      if (id === 'cursor') continue;
-      expect(m[id].install.method).toBe('npm');
-    }
+    expect(m['cursor-cli'].install.method).toBe('fhs-wrapper');
+    expect(m['claude-code'].install.method).toBe('npm');
+    expect(m.codex.install.method).toBe('npm');
+  });
+
+  it('marks cursor manual-review and cursor-cli automated-review', () => {
+    const m = loadVersionsManifest();
+    expect(m.cursor.ranges[0].review).toBe('manual');
+    expect(m['cursor-cli'].ranges[0].review).toBe('automated');
+  });
+});
+
+describe('assertValidRangeBounds', () => {
+  const base = { profile: 'native-v1', status: 'verified' as const };
+
+  it('accepts parseable bounds (min only, and min+max)', () => {
+    expect(() => assertValidRangeBounds('codex', { ...base, min: '0.139.0', max: null })).not.toThrow();
+    expect(() => assertValidRangeBounds('codex', { ...base, min: '0.139.0', max: '0.155.0' })).not.toThrow();
+  });
+
+  it('throws on a min bound that is not valid semver', () => {
+    expect(() => assertValidRangeBounds('codex', { ...base, min: '0,155.0', max: null })).toThrow(
+      'config/config.json "codex" has a range with an invalid semver bound (min "0,155.0")'
+    );
+  });
+
+  it('throws on a max bound that is not valid semver', () => {
+    expect(() => assertValidRangeBounds('codex', { ...base, min: '0.139.0', max: '0,155.0' })).toThrow(
+      'config/config.json "codex" has a range with an invalid semver bound (max "0,155.0")'
+    );
   });
 });

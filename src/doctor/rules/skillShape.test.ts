@@ -6,7 +6,7 @@ import { skillShapeRule } from './skillShape';
 import type { DoctorContext } from '../types';
 
 function makeCtx(repoRoot: string): DoctorContext {
-  return { repoRoot, homeDir: '/home/user', config: { status: 'absent' }, configuredHarnesses: [], pendingHarnesses: [] };
+  return { repoRoot, homeDir: '/home/user', config: { status: 'absent' }, configuredHarnesses: [], pendingHarnesses: [], installedVersions: {} as DoctorContext['installedVersions'] };
 }
 
 describe('skillShapeRule', () => {

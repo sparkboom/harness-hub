@@ -6,7 +6,7 @@ import { generatedFileDriftRule } from './generatedFileDrift';
 import type { DoctorContext } from '../types';
 
 function makeCtx(repoRoot: string, configuredHarnesses: DoctorContext['configuredHarnesses'] = ['claude-code']): DoctorContext {
-  return { repoRoot, homeDir: '/home/user', config: { status: 'absent' }, configuredHarnesses, pendingHarnesses: [] };
+  return { repoRoot, homeDir: '/home/user', config: { status: 'absent' }, configuredHarnesses, pendingHarnesses: [], installedVersions: {} as DoctorContext['installedVersions'] };
 }
 
 describe('generatedFileDriftRule', () => {

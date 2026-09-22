@@ -1,11 +1,23 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+// Mirror of src/registry/versions.ts — test/tools cannot import from src/.
+export interface VersionRange {
+  profile: string;
+  min: string;
+  max: string | null;
+  status: 'verified' | 'unverified';
+  verifiedDate?: string;
+  caveat?: string;
+  review?: 'automated' | 'manual';
+}
+
+export const UNPINNED = 'unpinned';
+
 export interface HarnessManifestEntry {
   displayName: string;
-  version: string;
-  verifiedDate: string;
   install: { method: string; package?: string; url?: string };
+  ranges: VersionRange[];
 }
 
 // test/tools/ code runs from two layouts: source under vitest (__dirname =

@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { valid } from 'semver';
 import { ALL_HARNESS_IDS, type HarnessId } from '../harnesses';
+import { getProfile } from './profiles';
 
 export interface HarnessInstallManifest {
   method: 'npm' | 'fhs-wrapper';
@@ -8,11 +10,20 @@ export interface HarnessInstallManifest {
   url?: string;
 }
 
+export interface VersionRange {
+  profile: string;
+  min: string;
+  max: string | null;
+  status: 'verified' | 'unverified';
+  verifiedDate?: string;
+  caveat?: string;
+  review?: 'automated' | 'manual';
+}
+
 export interface HarnessVersionEntry {
   displayName: string;
-  version: string;
-  verifiedDate: string;
   install: HarnessInstallManifest;
+  ranges: VersionRange[];
 }
 
 // Compiled to dist/registry/versions.js (__dirname = dist/registry) and run
@@ -24,11 +35,40 @@ interface ManifestShape {
   harness: { versions: Record<string, HarnessVersionEntry> };
 }
 
+let cached: Record<HarnessId, HarnessVersionEntry> | undefined;
+
+export function assertValidRangeBounds(id: string, r: VersionRange): void {
+  if (!valid(r.min)) {
+    throw new Error(`config/config.json "${id}" has a range with an invalid semver bound (min "${r.min}")`);
+  }
+  if (r.max !== null && !valid(r.max)) {
+    throw new Error(`config/config.json "${id}" has a range with an invalid semver bound (max "${r.max}")`);
+  }
+}
+
 export function loadVersionsManifest(): Record<HarnessId, HarnessVersionEntry> {
+  if (cached) return cached;
   const raw = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8')) as ManifestShape;
   const versions = raw.harness.versions;
   for (const id of ALL_HARNESS_IDS) {
     if (!(id in versions)) throw new Error(`config/config.json is missing an entry for "${id}"`);
   }
-  return versions as Record<HarnessId, HarnessVersionEntry>;
+  for (const id of ALL_HARNESS_IDS) {
+    const entry = versions[id];
+    if (!Array.isArray(entry.ranges) || entry.ranges.length === 0) {
+      throw new Error(`config/config.json "${id}" has no ranges`);
+    }
+    for (const r of entry.ranges) {
+      if (!getProfile(r.profile)) {
+        throw new Error(`config/config.json "${id}" references unknown profile "${r.profile}"`);
+      }
+      assertValidRangeBounds(id, r);
+    }
+  }
+  cached = versions as Record<HarnessId, HarnessVersionEntry>;
+  return cached;
+}
+
+export function getVersionEntry(id: HarnessId): HarnessVersionEntry {
+  return loadVersionsManifest()[id];
 }

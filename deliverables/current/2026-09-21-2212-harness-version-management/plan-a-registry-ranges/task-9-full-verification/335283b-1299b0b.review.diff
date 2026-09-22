@@ -1,0 +1,160 @@
+# Review package: 335283b..HEAD
+
+## Commits
+1299b0b fix(tools): derive detect pin from verified ranges (mirrors registry rule)
+
+## Files changed
+ test/tools/detect.test.ts | 30 ++++++++++++++++++++++++++----
+ test/tools/detect.ts      | 12 ++++++++++--
+ test/tools/manifest.ts    | 16 ++++++++++++++--
+ 3 files changed, 50 insertions(+), 8 deletions(-)
+
+## Diff
+diff --git a/test/tools/detect.test.ts b/test/tools/detect.test.ts
+index 9a190b8..7c290fd 100644
+--- a/test/tools/detect.test.ts
++++ b/test/tools/detect.test.ts
+@@ -1,28 +1,50 @@
+ import { describe, it, expect } from 'vitest';
+ import { formatDetect } from './detect';
+ import { detectWith } from './detect';
+-import { loadManifest } from './manifest';
++import { loadManifest, UNPINNED } from './manifest';
++
++// Re-expresses the registry pin rule (newest verified range, max ?? min) so
++// the expectation is derived from config data, not a static literal.
++function expectedPin(id: string): string {
++  const ranges = loadManifest()[id].ranges;
++  const verified = ranges.filter((r) => r.status === 'verified').at(-1);
++  if (!verified) return UNPINNED;
++  return verified.max ?? verified.min;
++}
+ 
+ describe('detect', () => {
+   it('reports a missing harness with null installed', () => {
+     const rows = detectWith(() => null);
+     const cursor = rows.find((r) => r.id === 'cursor')!;
+     expect(cursor.installed).toBeNull();
+-    expect(cursor.pin).toBe('unpinned');
++    // cursor's only range is verified (manual review) and open-ended → pin is
++    // the range min. The genuinely unverified entry is cursor-cli.
++    expect(cursor.pin).toBe(expectedPin('cursor'));
++    expect(cursor.pin).toBe('3.0.0');
++    const cursorCli = rows.find((r) => r.id === 'cursor-cli')!;
++    expect(cursorCli.pin).toBe(UNPINNED);
+   });
+ 
+   it('reports an installed harness version', () => {
+     const rows = detectWith((id) => (id === 'opencode' ? '1.16.2\n' : null));
+     expect(rows.find((r) => r.id === 'opencode')!.installed).toBe('1.16.2');
+     expect(rows.find((r) => r.id === 'claude-code')!.installed).toBeNull();
+   });
+ 
+   it('formats every harness id and its pin', () => {
+     const rows = detectWith(() => null);
+     const out = formatDetect(rows);
+-    const manifest = loadManifest();
+     expect(out).toContain('claude-code');
+-    expect(out).toContain(manifest['claude-code'].verifiedVersion ?? 'unpinned');
++    // Open-ended verified range (min 2.0.0, max null) → pin is the min.
++    expect(out).toContain(expectedPin('claude-code'));
+     expect(out).toContain('NOT INSTALLED');
+   });
++
++  it('derives a capped verified range pin from max', () => {
++    const rows = detectWith(() => null);
++    const codex = rows.find((r) => r.id === 'codex')!;
++    // codex's newest verified range is 0.139.0 ≤ v < 0.155.0 → pin is the max.
++    expect(codex.pin).toBe(expectedPin('codex'));
++    expect(codex.pin).toBe('0.155.0');
++  });
+ });
+diff --git a/test/tools/detect.ts b/test/tools/detect.ts
+index 1fec2db..64c1be1 100644
+--- a/test/tools/detect.ts
++++ b/test/tools/detect.ts
+@@ -1,15 +1,23 @@
+ import { spawnSync } from 'node:child_process';
+ import { existsSync } from 'node:fs';
+ import { homedir } from 'node:os';
+ import { join } from 'node:path';
+-import { loadManifest } from './manifest';
++import { loadManifest, UNPINNED, type VersionRange } from './manifest';
++
++// Pin derivation mirrors src/registry/data.ts's registry rule: the newest
++// `verified` range's max (or min when the range is open-ended, max === null).
++export function derivedPin(ranges: VersionRange[]): string {
++  const verified = ranges.filter((r) => r.status === 'verified').at(-1);
++  if (!verified) return UNPINNED;
++  return verified.max ?? verified.min;
++}
+ 
+ export interface DetectRow {
+   id: string;
+   displayName: string;
+   pin: string;
+   installed: string | null;
+ }
+ 
+ // Detection targets the harness *binary*, not any same-name editor binary.
+ // Cursor is the headless `agent` CLI, NOT the `cursor` IDE (spec R3).
+@@ -58,21 +66,21 @@ export function detectWith(runner: VersionRunner = runVersion): DetectRow[] {
+   return Object.keys(manifest)
+     .sort()
+     .map((id) => {
+       // Normalize injected-runner output to runVersion's contract: trimmed,
+       // non-empty, else null (runVersion already trims its own result).
+       const v = runner(id);
+       const installed = v === null ? null : v.trim() || null;
+       return {
+         id,
+         displayName: manifest[id].displayName,
+-        pin: manifest[id].verifiedVersion ?? 'unpinned',
++        pin: derivedPin(manifest[id].ranges),
+         installed,
+       };
+     });
+ }
+ 
+ export function detectInstalled(): DetectRow[] {
+   return detectWith(runVersion);
+ }
+ 
+ export function formatDetect(rows: DetectRow[]): string {
+diff --git a/test/tools/manifest.ts b/test/tools/manifest.ts
+index f08635b..5c06636 100644
+--- a/test/tools/manifest.ts
++++ b/test/tools/manifest.ts
+@@ -1,18 +1,30 @@
+ import { existsSync, readFileSync } from 'node:fs';
+ import { join } from 'node:path';
+ 
++// Mirror of src/registry/versions.ts — test/tools cannot import from src/.
++export interface VersionRange {
++  profile: string;
++  min: string;
++  max: string | null;
++  status: 'verified' | 'unverified';
++  verifiedDate?: string;
++  caveat?: string;
++  review?: 'automated' | 'manual';
++}
++
++export const UNPINNED = 'unpinned';
++
+ export interface HarnessManifestEntry {
+   displayName: string;
+-  verifiedVersion?: string;
+-  verifiedDate: string;
+   install: { method: string; package?: string; url?: string };
++  ranges: VersionRange[];
+ }
+ 
+ // test/tools/ code runs from two layouts: source under vitest (__dirname =
+ // <repo>/test/tools) and compiled via build:tools (__dirname =
+ // <repo>/test/tools/dist). The config sits at the repo root
+ // (<repo>/config/config.json), so probe candidates in order and use the first
+ // that exists.
+ const MANIFEST_CANDIDATES = [
+   join(__dirname, '..', '..', 'config', 'config.json'),       // source: test/tools → repo root
+   join(__dirname, '..', '..', '..', 'config', 'config.json'), // compiled: test/tools/dist → repo root

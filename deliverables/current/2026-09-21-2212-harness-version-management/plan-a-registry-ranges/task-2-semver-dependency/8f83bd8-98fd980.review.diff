@@ -1,0 +1,146 @@
+# Review package: 8f83bd8..HEAD
+
+## Commits
+98fd980 chore: add semver dependency for version-range matching
+
+## Files changed
+ package-lock.json | 21 +++++++++++++++++++++
+ package.json      |  7 ++++++-
+ 2 files changed, 27 insertions(+), 1 deletion(-)
+
+## Diff
+diff --git a/package-lock.json b/package-lock.json
+index f06c152..b76370e 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -4,27 +4,29 @@
+   "lockfileVersion": 3,
+   "requires": true,
+   "packages": {
+     "": {
+       "name": "harness-hub",
+       "version": "0.1.0",
+       "license": "MIT",
+       "dependencies": {
+         "commander": "^15.0.0",
+         "gray-matter": "^4.0.3",
++        "semver": "^7.8.5",
+         "yaml": "^2.9.1"
+       },
+       "bin": {
+         "harness-hub": "dist/bin.js"
+       },
+       "devDependencies": {
+         "@types/node": "^22.0.0",
++        "@types/semver": "^7.8.0",
+         "typescript": "^7.0.2",
+         "vitest": "^5.0.1"
+       },
+       "engines": {
+         "node": ">=22.12.0"
+       }
+     },
+     "node_modules/@jridgewell/resolve-uri": {
+       "version": "3.1.2",
+       "resolved": "https://registry.npmjs.org/@jridgewell/resolve-uri/-/resolve-uri-3.1.2.tgz",
+@@ -388,20 +390,27 @@
+     "node_modules/@types/node": {
+       "version": "22.20.4",
+       "resolved": "https://registry.npmjs.org/@types/node/-/node-22.20.4.tgz",
+       "integrity": "sha512-zJRE40jpHtKqE/C4fgHrAKQLJuSpzEnP9ff9Y7YtoR3Wd2pwqzlekDeEuUQXjRd+QCYnVnNwuJYmhdk9XV8gvA==",
+       "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "undici-types": "~6.21.0"
+       }
+     },
++    "node_modules/@types/semver": {
++      "version": "7.8.0",
++      "resolved": "https://registry.npmjs.org/@types/semver/-/semver-7.8.0.tgz",
++      "integrity": "sha512-1mAINjtQCXXeLkJ9ehXkwOcBpqtLxiVtKhpUf83DdRNdQKV0iXZpaHYqRr7nj+wvxuJzoAmAwXI+sCNMv1CzLQ==",
++      "dev": true,
++      "license": "MIT"
++    },
+     "node_modules/@typescript/typescript-aix-ppc64": {
+       "version": "7.0.2",
+       "resolved": "https://registry.npmjs.org/@typescript/typescript-aix-ppc64/-/typescript-aix-ppc64-7.0.2.tgz",
+       "integrity": "sha512-MTKKkWB7p/0E9xi1d1tHtZ5PiLkGEMIq88pK2CubZjOsLtYTLqhgIgi6zepFa+9GHZ6h05NMCkQxGKiPXMxXtQ==",
+       "cpu": [
+         "ppc64"
+       ],
+       "dev": true,
+       "license": "Apache-2.0",
+       "optional": true,
+@@ -1375,20 +1384,32 @@
+       "integrity": "sha512-vfD3pmTzGpufjScBh50YHKzEu2lxBWhVEHsNGoEXmCmn2hKGfeNLYMzCJpe8cD7gqX7TJluOVpBkAequ6dgMmA==",
+       "license": "MIT",
+       "dependencies": {
+         "extend-shallow": "^2.0.1",
+         "kind-of": "^6.0.0"
+       },
+       "engines": {
+         "node": ">=4"
+       }
+     },
++    "node_modules/semver": {
++      "version": "7.8.5",
++      "resolved": "https://registry.npmjs.org/semver/-/semver-7.8.5.tgz",
++      "integrity": "sha512-Y7/KDsb8LjooZpwaqGyulO6DQlksgCncchHGk+sZIY4SBvUocMBEFH5Ur1fI4dV+Jvl0w6cjvucaIi40puRioA==",
++      "license": "ISC",
++      "bin": {
++        "semver": "bin/semver.js"
++      },
++      "engines": {
++        "node": ">=10"
++      }
++    },
+     "node_modules/siginfo": {
+       "version": "2.0.0",
+       "resolved": "https://registry.npmjs.org/siginfo/-/siginfo-2.0.0.tgz",
+       "integrity": "sha512-ybx0WO1/8bSBLEWXZvEd7gMW3Sn3JFlW3TvX1nREbDLRNQNaeNN8WK0meBwPdAaOI7TtRRRJn/Es1zhrrCHu7g==",
+       "dev": true,
+       "license": "ISC"
+     },
+     "node_modules/source-map-js": {
+       "version": "1.2.1",
+       "resolved": "https://registry.npmjs.org/source-map-js/-/source-map-js-1.2.1.tgz",
+diff --git a/package.json b/package.json
+index 501ba8f..df3fc12 100644
+--- a/package.json
++++ b/package.json
+@@ -2,29 +2,34 @@
+   "name": "harness-hub",
+   "version": "0.1.0",
+   "description": "Make a repo harness-agnostic: wire AGENTS.md and .agents/skills/ into whichever coding harnesses you enable.",
+   "license": "MIT",
+   "bin": {
+     "harness-hub": "dist/bin.js"
+   },
+   "engines": {
+     "node": ">=22.12.0"
+   },
+-  "files": ["dist", "config/config.json"],
++  "files": [
++    "dist",
++    "config/config.json"
++  ],
+   "scripts": {
+     "build": "tsc -p tsconfig.json",
+     "test": "vitest run",
+     "test:watch": "vitest",
+     "typecheck": "tsc -p tsconfig.json --noEmit",
+     "build:tools": "tsc -p test/tools/tsconfig.json"
+   },
+   "dependencies": {
+     "commander": "^15.0.0",
+     "gray-matter": "^4.0.3",
++    "semver": "^7.8.5",
+     "yaml": "^2.9.1"
+   },
+   "devDependencies": {
+     "@types/node": "^22.0.0",
++    "@types/semver": "^7.8.0",
+     "typescript": "^7.0.2",
+     "vitest": "^5.0.1"
+   }
+ }

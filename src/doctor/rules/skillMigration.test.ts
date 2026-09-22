@@ -6,7 +6,7 @@ import { skillMigrationRule } from './skillMigration';
 import type { DoctorContext } from '../types';
 
 function makeCtx(repoRoot: string, pendingHarnesses: DoctorContext['pendingHarnesses'] = ['claude-code']): DoctorContext {
-  return { repoRoot, homeDir: '/home/user', config: { status: 'absent' }, configuredHarnesses: [], pendingHarnesses };
+  return { repoRoot, homeDir: '/home/user', config: { status: 'absent' }, configuredHarnesses: [], pendingHarnesses, installedVersions: {} as DoctorContext['installedVersions'] };
 }
 
 describe('skillMigrationRule', () => {

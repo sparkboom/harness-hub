@@ -9,6 +9,7 @@ function makeCtx(overrides: Partial<DoctorContext> = {}): DoctorContext {
     config: { status: 'absent' },
     configuredHarnesses: [],
     pendingHarnesses: [],
+    installedVersions: {} as DoctorContext['installedVersions'],
     ...overrides,
   };
 }

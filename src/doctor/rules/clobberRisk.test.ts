@@ -6,7 +6,7 @@ import { clobberRiskRule } from './clobberRisk';
 import type { DoctorContext } from '../types';
 
 function makeCtx(repoRoot: string, pendingHarnesses: DoctorContext['pendingHarnesses'] = []): DoctorContext {
-  return { repoRoot, homeDir: '/home/user', config: { status: 'absent' }, configuredHarnesses: [], pendingHarnesses };
+  return { repoRoot, homeDir: '/home/user', config: { status: 'absent' }, configuredHarnesses: [], pendingHarnesses, installedVersions: {} as DoctorContext['installedVersions'] };
 }
 
 describe('clobberRiskRule', () => {

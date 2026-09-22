@@ -46,4 +46,9 @@ describe('harness registry', () => {
       expect(other.skills.symlinkPath).toBeUndefined();
     }
   });
+
+  it('derives verifiedVersion as the newest verified range max (or min when open-ended)', () => {
+    expect(getHarnessEntry('codex').verifiedVersion).toBe('0.155.0'); // max of the verified range
+    expect(getHarnessEntry('claude-code').verifiedVersion).toBe('2.0.0'); // open-ended → min
+  });
 });

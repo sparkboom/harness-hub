@@ -8,3 +8,5 @@ export function getHarnessEntry(id: HarnessId): HarnessEntry {
 
 export { HARNESS_REGISTRY };
 export type { HarnessEntry, AgentsDocConvention, SkillsConvention, TrustGateConvention } from './types';
+export { getVersionEntry } from './versions';
+export { resolveHarnessStatus, resolveVersion, type ResolvedStatus, type Resolution } from './resolve';

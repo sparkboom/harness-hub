@@ -28,15 +28,18 @@ Conventions:
    between stages.
 2. `{project}` is a short kebab-case slug for the deliverable,
    e.g. `user-auth`.
-3. One folder per deliverable. The spec and all plans for that deliverable
-   stay together in the same folder.
-4. Specs use the `.spec.md` extension; plans use `.plan.md`. Base names are
-   free-form — `spec.md` / `plan.md` are fine when a folder holds one of each:
+3. One folder per deliverable. The spec lives at the deliverable folder root;
+   each plan lives in its own subfolder, named after the plan.
+4. Specs use the `.spec.md` extension; plans use `.plan.md`. A plan is named
+   `<plan-name>.plan.md` and lives inside its own folder `<plan-name>/`,
+   adjacent to the spec. Base names are free-form — `spec.md` / `plan.md` are
+   fine when a folder holds one of each:
 
    ```
    deliverables/current/2026-09-14-2137-user-auth/
      user-auth.spec.md
-     user-auth.plan.md
+     user-auth/
+       user-auth.plan.md
    ```
 
 5. When a deliverable is implemented and resolved, move the whole folder
@@ -68,11 +71,11 @@ execution (that scratch is git-ignored and is also what the ledger-recovery
 logic reads, so do not relocate it mid-run).
 
 This repo's convention governs **where the artifacts live once the deliverable
-is done**: promote them from the scratch workspace into the deliverable
-folder, next to the spec and plan. When the plan is finished (or whenever the
+is done**: promote them from the scratch workspace into the plan's own folder
+within the deliverable folder. When the plan is finished (or whenever the
 committed record is needed), move the artifacts out of
 `.superpowers/sdd/<plan-basename>/` into
-`deliverables/current/{datetime}-{project}/`
+`deliverables/current/{datetime}-{project}/<plan-name>/`
 using the layout and names below, then remove the empty scratch directory.
 
 Given a deliverable folder, the promoted layout is:
@@ -80,15 +83,15 @@ Given a deliverable folder, the promoted layout is:
 ```
 deliverables/current/2026-09-20-0021-harness-hub-mvp/
   harness-hub-mvp.spec.md
-  harness-hub-mvp.plan.md
-  harness-hub-mvp.progress.md
-  tasks/
-    1-project-scaffold-version-utility/
+  harness-hub-mvp/
+    harness-hub-mvp.plan.md
+    harness-hub-mvp.progress.md
+    task-1-project-scaffold-version-utility/
       2026-09-20-1246-1-project-scaffold-version-utility.brief.md
       2026-09-20-1315-1-project-scaffold-version-utility.report.md
       ce5e63c-a8cb808.review.diff
     ...
-    24-final-fix/
+    task-24-final-fix/
       2026-09-20-1719-24-final-fix.brief.md
       2026-09-20-1726-24-final-fix.report.md
       4a381bf-3e24cb4.review.diff
@@ -96,12 +99,12 @@ deliverables/current/2026-09-20-0021-harness-hub-mvp/
 
 Conventions:
 
-1. **Progress ledger** — `{deliverable}.progress.md` (e.g.
-   `harness-hub-mvp.progress.md`), beside the spec and plan.
-2. **Task folders** — a `tasks/` subfolder beside the spec/plan/progress holds
-   one folder per task, named `{task number}-{task name}/`. The task name is a
-   kebab-case slug of the plan's task title (e.g.
-   `1-project-scaffold-version-utility/`).
+1. **Progress ledger** — `<plan-name>.progress.md` (e.g.
+   `harness-hub-mvp.progress.md`), inside the plan's folder, beside its plan.
+2. **Task folders** — live in the plan's folder (no `tasks/` parent), one
+   folder per task, named `task-{task number}-{task name}/`. The task name is
+   a kebab-case slug of the plan's task title (e.g.
+   `task-1-project-scaffold-version-utility/`).
 3. **Briefs & reports** — each task folder holds
    `{datetime}-{task number}-{task name}.brief.md` and
    `{datetime}-{task number}-{task name}.report.md`. `{datetime}` is the
@@ -110,13 +113,14 @@ Conventions:
    named for the review's commit range.
 5. **Unplanned tasks** — work outside the plan (e.g. a final-fix round) gets
    an incremental task number continuing from the plan and follows the same
-   naming (e.g. `24-final-fix/`). Cross-cutting reviews that span the whole
-   branch (e.g. the final whole-branch review) live in the final-fix folder.
+   naming (e.g. `task-24-final-fix/`). Cross-cutting reviews that span the
+   whole branch (e.g. the final whole-branch review) live in the final-fix
+   folder.
 
 When a deliverable is archived (rule 5 above), the whole folder — including
-`tasks/` and the progress ledger — moves together, name unchanged. Work that
-is finished moves to `deliverables/complete/` until review and final
-disposition.
+each plan folder (with its task folders and progress ledger) — moves
+together, name unchanged. Work that is finished moves to
+`deliverables/complete/` until review and final disposition.
 
 ### Promotion step (when finishing)
 
@@ -124,6 +128,6 @@ The skills' scratch names (`task-N-brief.md`, `task-N-report.md`,
 `review-<base7>..<head7>.diff`, `progress.md`) map onto this convention at
 promotion time — brief/report get the `{datetime}-{N}-{slug}` prefix, the
 review diff becomes `{base7}-{head7}.review.diff` in the task's folder, and
-`progress.md` becomes `{deliverable}.progress.md`. Mapping the scratch files
-to task folders requires the plan (task title → slug, commit range → task),
-so do it against the finished plan, not by guess.
+`progress.md` becomes `<plan-name>.progress.md` in the plan's folder. Mapping
+the scratch files to task folders requires the plan (task title → slug,
+commit range → task), so do it against the finished plan, not by guess.

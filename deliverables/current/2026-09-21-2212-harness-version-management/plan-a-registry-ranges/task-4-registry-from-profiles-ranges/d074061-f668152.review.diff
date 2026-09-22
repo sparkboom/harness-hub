@@ -1,0 +1,143 @@
+# Review package: d074061..HEAD
+
+## Commits
+f668152 feat(registry): build HARNESS_REGISTRY from profiles + ranges
+
+## Files changed
+ src/registry/data.ts       | 100 +++++++++++++++------------------------------
+ src/registry/index.test.ts |   5 +++
+ 2 files changed, 39 insertions(+), 66 deletions(-)
+
+## Diff
+diff --git a/src/registry/data.ts b/src/registry/data.ts
+index d1f5e6b..ed7a541 100644
+--- a/src/registry/data.ts
++++ b/src/registry/data.ts
+@@ -1,71 +1,39 @@
+ import type { HarnessId } from '../harnesses';
++import { ALL_HARNESS_IDS } from '../harnesses';
+ import type { HarnessEntry } from './types';
+-import { loadVersionsManifest } from './versions';
++import { loadVersionsManifest, type HarnessVersionEntry, type VersionRange } from './versions';
++import { getProfile } from './profiles';
+ 
+ const versions = loadVersionsManifest();
+ 
+-export const HARNESS_REGISTRY: Record<HarnessId, HarnessEntry> = {
+-  'claude-code': {
+-    id: 'claude-code',
+-    displayName: versions['claude-code'].displayName,
+-    verifiedVersion: versions['claude-code'].version,
+-    verifiedDate: versions['claude-code'].verifiedDate,
+-    agentsDoc: { mode: 'symlink', symlinkPath: 'CLAUDE.md' },
+-    skills: { mode: 'migrate-symlink', symlinkPath: '.claude/skills' },
+-  },
+-  cursor: {
+-    id: 'cursor',
+-    displayName: versions.cursor.displayName,
+-    verifiedVersion: versions.cursor.version,
+-    verifiedDate: versions.cursor.verifiedDate,
+-    agentsDoc: { mode: 'native' },
+-    skills: { mode: 'native' },
+-  },
+-  opencode: {
+-    id: 'opencode',
+-    displayName: versions.opencode.displayName,
+-    verifiedVersion: versions.opencode.version,
+-    verifiedDate: versions.opencode.verifiedDate,
+-    agentsDoc: { mode: 'native' },
+-    skills: { mode: 'native' },
+-  },
+-  codex: {
+-    id: 'codex',
+-    displayName: versions.codex.displayName,
+-    verifiedVersion: versions.codex.version,
+-    verifiedDate: versions.codex.verifiedDate,
+-    agentsDoc: { mode: 'native' },
+-    skills: { mode: 'native' },
+-  },
+-  hermes: {
+-    id: 'hermes',
+-    displayName: versions.hermes.displayName,
+-    verifiedVersion: versions.hermes.version,
+-    verifiedDate: versions.hermes.verifiedDate,
+-    agentsDoc: { mode: 'native' },
+-    skills: {
+-      mode: 'native',
+-      trustGate: {
+-        configPathFromHome: '.hermes/config.yaml',
+-        trustedDirsKeyPath: ['skills', 'trusted_project_dirs'],
+-        trustCommand: 'hermes skills trust',
+-      },
+-    },
+-  },
+-  pi: {
+-    id: 'pi',
+-    displayName: versions.pi.displayName,
+-    verifiedVersion: versions.pi.version,
+-    verifiedDate: versions.pi.verifiedDate,
+-    agentsDoc: { mode: 'native' },
+-    skills: { mode: 'native' },
+-  },
+-  deepseek: {
+-    id: 'deepseek',
+-    displayName: versions.deepseek.displayName,
+-    verifiedVersion: versions.deepseek.version,
+-    verifiedDate: versions.deepseek.verifiedDate,
+-    agentsDoc: { mode: 'native' },
+-    skills: { mode: 'native' },
+-  },
+-};
++function newestVerified(ranges: VersionRange[]): VersionRange | undefined {
++  return ranges.filter((r) => r.status === 'verified').at(-1);
++}
++
++// The profile the runtime should apply for wiring: the newest verified range's
++// profile; if nothing is verified yet, the newest range (highest bounds).
++function effectiveProfile(entry: HarnessVersionEntry) {
++  const v = newestVerified(entry.ranges) ?? entry.ranges[entry.ranges.length - 1];
++  const profile = getProfile(v.profile);
++  if (!profile) throw new Error(`config/config.json "${entry.displayName}" references unknown profile "${v.profile}"`);
++  return profile;
++}
++
++function build(id: HarnessId): HarnessEntry {
++  const entry = versions[id];
++  const verified = newestVerified(entry.ranges);
++  const fallback = entry.ranges[entry.ranges.length - 1];
++  const profile = effectiveProfile(entry);
++  return {
++    id,
++    displayName: entry.displayName,
++    verifiedVersion: verified ? (verified.max ?? verified.min) : (fallback.max ?? fallback.min),
++    verifiedDate: verified?.verifiedDate ?? fallback.verifiedDate ?? '2026-01-01',
++    agentsDoc: profile.agentsDoc,
++    skills: profile.skills,
++  };
++}
++
++export const HARNESS_REGISTRY = Object.fromEntries(
++  ALL_HARNESS_IDS.map((id) => [id, build(id)])
++) as Record<HarnessId, HarnessEntry>;
+\ No newline at end of file
+diff --git a/src/registry/index.test.ts b/src/registry/index.test.ts
+index 14f4fde..d989fe8 100644
+--- a/src/registry/index.test.ts
++++ b/src/registry/index.test.ts
+@@ -39,11 +39,16 @@ describe('harness registry', () => {
+     const entry = getHarnessEntry('claude-code');
+     expect(entry.agentsDoc.symlinkPath).toBe('CLAUDE.md');
+     expect(entry.skills.symlinkPath).toBe('.claude/skills');
+     for (const id of ALL_HARNESS_IDS) {
+       if (id === 'claude-code') continue;
+       const other = getHarnessEntry(id);
+       expect(other.agentsDoc.symlinkPath).toBeUndefined();
+       expect(other.skills.symlinkPath).toBeUndefined();
+     }
+   });
++
++  it('derives verifiedVersion as the newest verified range max (or min when open-ended)', () => {
++    expect(getHarnessEntry('codex').verifiedVersion).toBe('0.155.0'); // max of the verified range
++    expect(getHarnessEntry('claude-code').verifiedVersion).toBe('2.0.0'); // open-ended → min
++  });
+ });
