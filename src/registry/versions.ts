@@ -57,3 +57,7 @@ export function loadVersionsManifest(): Record<HarnessId, HarnessVersionEntry> {
   cached = versions as Record<HarnessId, HarnessVersionEntry>;
   return cached;
 }
+
+export function getVersionEntry(id: HarnessId): HarnessVersionEntry {
+  return loadVersionsManifest()[id];
+}
