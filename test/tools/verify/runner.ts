@@ -55,7 +55,15 @@ export async function runScenario(
   const beforeRepo = snapshot(ctx.repoRoot);
   const beforeHome = snapshot(ctx.homeDir);
 
-  const result = await runner.run(ctx);
+  // A throwing runner (spawn ENOENT, container timeout) must not abort the
+  // pipeline: record the failure and continue to snapshots/predicate so the
+  // outcome still records the failed run. Non-throwing behavior unchanged.
+  let result: RunResult;
+  try {
+    result = await runner.run(ctx);
+  } catch (e) {
+    result = { status: 'failed', output: '', error: e instanceof Error ? e.message : String(e) };
+  }
 
   const afterRepo = snapshot(ctx.repoRoot);
   const afterHome = snapshot(ctx.homeDir);

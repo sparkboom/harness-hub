@@ -40,4 +40,24 @@ describe('runScenario', () => {
     });
     expect(outcome.result).toBe(false);
   });
+
+  it('survives a throwing runner: still snapshots, evaluates the predicate, and carries the error as note', async () => {
+    const runner: Runner = {
+      kind: 'container',
+      run: async () => {
+        throw new Error('spawn ENOENT');
+      },
+    };
+    // skill-wiring has a deterministic-pass predicate over post-run snapshots;
+    // the pipeline must continue past the rejected run, so result is true
+    // while note records the failed-run diagnostics.
+    const outcome = await runScenario(SCENARIO_SUITE['skill-wiring'], runner, {
+      harnessId: 'codex', version: '0.155.1', repoRoot, homeDir,
+      prompt: SCENARIO_SUITE['skill-wiring'].prompt,
+    });
+    expect(outcome.result).toBe(true);
+    expect(outcome.passes).toBe(1);
+    expect(outcome.runs).toBe(1);
+    expect(outcome.note).toBe('spawn ENOENT');
+  });
 });
