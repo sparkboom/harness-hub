@@ -3,45 +3,71 @@
     "versions": {
       "claude-code": {
         "displayName": "Claude Code",
-        "version": "2.1.272",
-        "verifiedDate": "2026-09-15",
-        "install": { "method": "npm", "package": "@anthropic-ai/claude-code" }
+        "install": { "method": "npm", "package": "@anthropic-ai/claude-code" },
+        "ranges": [
+          { "profile": "claude-code-symlink-v1", "min": "2.0.0", "max": null,
+            "status": "verified", "verifiedDate": "2026-09-15", "review": "automated" }
+        ]
       },
       "cursor": {
         "displayName": "Cursor",
-        "version": "3.x",
-        "verifiedDate": "2026-09-10",
-        "install": { "method": "fhs-wrapper", "url": "https://cursor.com/install" }
+        "install": { "method": "fhs-wrapper", "url": "https://cursor.com/install" },
+        "ranges": [
+          { "profile": "native-v1", "min": "3.0.0", "max": null,
+            "status": "verified", "verifiedDate": "2026-09-10", "review": "manual",
+            "caveat": "IDE surface; CLI ≡ IDE assumption unverified — manual review only." }
+        ]
+      },
+      "cursor-cli": {
+        "displayName": "Cursor CLI",
+        "install": { "method": "fhs-wrapper", "url": "https://cursor.com/install" },
+        "ranges": [
+          { "profile": "native-v1", "min": "3.0.0", "max": null,
+            "status": "unverified", "review": "automated",
+            "caveat": "AGENTS.md auto-load on the headless `agent` CLI is disputed — must be re-verified." }
+        ]
       },
       "opencode": {
         "displayName": "OpenCode",
-        "version": "1.18.31",
-        "verifiedDate": "2026-09-14",
-        "install": { "method": "npm", "package": "opencode-ai" }
+        "install": { "method": "npm", "package": "opencode-ai" },
+        "ranges": [
+          { "profile": "native-v1", "min": "1.0.0", "max": null,
+            "status": "verified", "verifiedDate": "2026-09-14", "review": "automated" }
+        ]
       },
       "codex": {
         "displayName": "Codex",
-        "version": "0.153.2",
-        "verifiedDate": "2026-09-03",
-        "install": { "method": "npm", "package": "@openai/codex" }
+        "install": { "method": "npm", "package": "@openai/codex" },
+        "ranges": [
+          { "profile": "native-v1", "min": "0.139.0", "max": "0.155.0",
+            "status": "verified", "verifiedDate": "2026-09-03", "review": "automated" },
+          { "profile": "native-v1", "min": "0.155.0", "max": null,
+            "status": "unverified", "review": "automated" }
+        ]
       },
       "hermes": {
         "displayName": "Hermes",
-        "version": "0.21.2",
-        "verifiedDate": "2026-09-11",
-        "install": { "method": "npm", "package": "hermes-agent" }
+        "install": { "method": "npm", "package": "hermes-agent" },
+        "ranges": [
+          { "profile": "hermes-native-v1", "min": "0.0.0", "max": null,
+            "status": "verified", "verifiedDate": "2026-09-11", "review": "automated" }
+        ]
       },
       "pi": {
         "displayName": "Pi",
-        "version": "0.85.0",
-        "verifiedDate": "2026-09-04",
-        "install": { "method": "npm", "package": "@mariozechner/pi-coding-agent" }
+        "install": { "method": "npm", "package": "@mariozechner/pi-coding-agent" },
+        "ranges": [
+          { "profile": "native-v1", "min": "0.0.0", "max": null,
+            "status": "verified", "verifiedDate": "2026-09-04", "review": "automated" }
+        ]
       },
       "deepseek": {
         "displayName": "DeepSeek Harness",
-        "version": "0.1.5-rc.1",
-        "verifiedDate": "2026-09-10",
-        "install": { "method": "npm", "package": "@deepseek-ai/dsh" }
+        "install": { "method": "npm", "package": "@deepseek-ai/dsh" },
+        "ranges": [
+          { "profile": "native-v1", "min": "0.0.0", "max": null,
+            "status": "verified", "verifiedDate": "2026-09-10", "review": "automated" }
+        ]
       }
     }
   }
