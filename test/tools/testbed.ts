@@ -50,6 +50,12 @@ export const HEADLESS_COMMANDS: Record<string, (repoRoot: string, prompt: string
   hermes: (_r, p) => ({ cmd: 'hermes', args: ['run', p] }),
   pi: (_r, p) => ({ cmd: 'pi', args: ['-p', p] }),
   deepseek: (_r, p) => ({ cmd: 'dsh', args: ['run', p] }),
+  // cursor (IDE) is human-only (spec R5) and is never dispatched through the
+  // container runner. This entry documents the in-container agent CLI shape
+  // for completeness but intentionally departs from PROBE_COMMANDS mirroring:
+  // probe's 'cursor' entry (standalone agent CLI with --mode ask --trust
+  // --workspace) is mirrored by the 'cursor-cli' entry above, not this one.
+  // Consequently this entry is never exercised by `testbed run`.
   cursor: (_r, p) => ({ cmd: 'agent', args: ['-p', p] }),
 };
 
