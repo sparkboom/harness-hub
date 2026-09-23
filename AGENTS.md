@@ -72,7 +72,10 @@ logic reads, so do not relocate it mid-run).
 
 This repo's convention governs **where the artifacts live once the deliverable
 is done**: promote them from the scratch workspace into the plan's own folder
-within the deliverable folder. When the plan is finished (or whenever the
+within the deliverable folder. **The plan's own folder already exists — it is
+the `<plan-name>/` subfolder holding the `.plan.md` (convention 4 above).
+Promote the artifacts into it, beside the plan; do not create a new nested
+folder named after the plan.** When the plan is finished (or whenever the
 committed record is needed), move the artifacts out of
 `.superpowers/sdd/<plan-basename>/` into
 `deliverables/current/{datetime}-{project}/<plan-name>/`

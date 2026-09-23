@@ -1,0 +1,7 @@
+# Template for npm-installed harnesses (see test/tools/testbed.ts dockerfileFor).
+# Kept as a committed reference; the generator inlines the pinned version.
+FROM node:22-slim
+ARG PKG
+ARG VERSION
+RUN npm install -g ${PKG}@${VERSION}
+WORKDIR /repo

@@ -1,0 +1,333 @@
+# Review package: 3355572..3045784
+
+## Commits
+3045784 feat(testbed): Dockerfile generation and testbed run/session/matrix core
+
+## Files changed
+ test/testbed/Dockerfile.template.git |   4 +
+ test/testbed/Dockerfile.template.npm |   7 ++
+ test/tools/testbed.mjs               |  17 +++++
+ test/tools/testbed.test.ts           | 112 +++++++++++++++++++++++++++
+ test/tools/testbed.ts                | 144 +++++++++++++++++++++++++++++++++++
+ 5 files changed, 284 insertions(+)
+
+## Diff
+diff --git a/test/testbed/Dockerfile.template.git b/test/testbed/Dockerfile.template.git
+new file mode 100644
+index 0000000..4da2b09
+--- /dev/null
++++ b/test/testbed/Dockerfile.template.git
+@@ -0,0 +1,4 @@
++# Template for git-installed harnesses. Install path is harness-specific; this
++# is a committed placeholder documenting the shape, not a working build.
++FROM node:22-slim
++WORKDIR /repo
+\ No newline at end of file
+diff --git a/test/testbed/Dockerfile.template.npm b/test/testbed/Dockerfile.template.npm
+new file mode 100644
+index 0000000..d66cf49
+--- /dev/null
++++ b/test/testbed/Dockerfile.template.npm
+@@ -0,0 +1,7 @@
++# Template for npm-installed harnesses (see test/tools/testbed.ts dockerfileFor).
++# Kept as a committed reference; the generator inlines the pinned version.
++FROM node:22-slim
++ARG PKG
++ARG VERSION
++RUN npm install -g ${PKG}@${VERSION}
++WORKDIR /repo
+\ No newline at end of file
+diff --git a/test/tools/testbed.mjs b/test/tools/testbed.mjs
+new file mode 100644
+index 0000000..8c26741
+--- /dev/null
++++ b/test/tools/testbed.mjs
+@@ -0,0 +1,17 @@
++import { createRequire } from 'node:module';
++import { existsSync } from 'node:fs';
++import { fileURLToPath } from 'node:url';
++import { dirname, join } from 'node:path';
++
++const here = dirname(fileURLToPath(import.meta.url));
++const entry = join(here, 'dist', 'testbed.js');
++if (!existsSync(entry)) {
++  console.error('tools not built — run: npm run build:tools');
++  process.exit(1);
++}
++const require = createRequire(import.meta.url);
++const { main } = require(entry);
++main(process.argv.slice(2)).then((code) => process.exit(code), (err) => {
++  console.error(err instanceof Error ? err.message : String(err));
++  process.exit(1);
++});
+\ No newline at end of file
+diff --git a/test/tools/testbed.test.ts b/test/tools/testbed.test.ts
+new file mode 100644
+index 0000000..201dfd8
+--- /dev/null
++++ b/test/tools/testbed.test.ts
+@@ -0,0 +1,112 @@
++// test/tools/testbed.test.ts
++//
++// Unit tests for the Docker testbed core. The real dockerExecutor is never
++// invoked: every build/run test injects a recording fake DockerExecutor, so
++// these tests never touch docker.
++import { describe, it, expect } from 'vitest';
++import { dockerfileFor, imageTag, HEADLESS_COMMANDS, runHarness, buildImage, type DockerExecutor } from './testbed';
++import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import { loadManifest } from './manifest';
++
++function recordingExec() {
++  const builds: Array<{ tag: string; contextDir: string }> = [];
++  const runs: Array<{ tag: string; command: string }> = [];
++  const exec: DockerExecutor = {
++    build: (tag, contextDir) => {
++      builds.push({ tag, contextDir });
++      return { status: 'ok', output: '' };
++    },
++    run: (tag, _mounts, command) => {
++      runs.push({ tag, command });
++      return { status: 'ok', output: '' };
++    },
++  };
++  return { exec, builds, runs };
++}
++
++describe('testbed', () => {
++  it('tags images by harness/version', () => {
++    expect(imageTag('codex', '0.155.1')).toBe('harness-hub/codex:0.155.1');
++  });
++
++  it('generates an npm Dockerfile pinning the exact version', () => {
++    const d = dockerfileFor('codex', '0.155.1', 'npm', '@openai/codex');
++    expect(d).toContain('npm install -g @openai/codex@0.155.1');
++  });
++
++  it('generates an fhs-wrapper Dockerfile using the harness install URL', () => {
++    const d = dockerfileFor('cursor', '3.0.0', 'fhs-wrapper', undefined);
++    expect(d).toContain('https://cursor.com/install');
++  });
++
++  it('maps claude-code to a -p prompt invocation', () => {
++    const spec = HEADLESS_COMMANDS['claude-code']('/repo', 'hello');
++    expect(spec.cmd).toBe('claude');
++    expect(spec.args).toEqual(['-p', 'hello']);
++  });
++
++  it('runs the headless command inside the container via the executor', () => {
++    const { exec, runs } = recordingExec();
++    const r = runHarness({
++      harness: 'claude-code', version: '2.1.272', prompt: 'hi',
++      repoRoot: '/tmp/repo', homeDir: '/tmp/home', workDir: '/tmp/w', exec,
++    });
++    expect(r.status).toBe('ok');
++    expect(runs[0]?.command).toContain('claude -p');
++    expect(runs[0]?.command).toContain('"hi"');
++  });
++
++  it('keeps flags bare and quotes value tokens for the sh -c entrypoint', () => {
++    const { exec, runs } = recordingExec();
++    runHarness({
++      harness: 'cursor-cli', version: '3.0.0', prompt: 'two words',
++      repoRoot: '/tmp/repo', homeDir: '/tmp/home', workDir: '/tmp/w', exec,
++    });
++    const command = runs[0]?.command ?? '';
++    expect(command).toContain('agent -p "two words"');
++    expect(command).toContain('--workspace "/repo"');
++  });
++
++  it('builds an image from the manifest entry via the injected executor', () => {
++    const dir = mkdtempSync(join(tmpdir(), 'testbed-'));
++    const { exec, builds } = recordingExec();
++    try {
++      const built = buildImage({ harness: 'codex', version: '0.155.1', workDir: dir, exec });
++      expect(built.tag).toBe('harness-hub/codex:0.155.1');
++      expect(builds).toEqual([{ tag: 'harness-hub/codex:0.155.1', contextDir: join(dir, 'context') }]);
++      const pkg = loadManifest()['codex'].install.package ?? '';
++      const dockerfile = readFileSync(join(dir, 'context', 'Dockerfile'), 'utf8');
++      expect(dockerfile).toContain(`npm install -g ${pkg}@0.155.1`);
++    } finally {
++      rmSync(dir, { recursive: true, force: true });
++    }
++  });
++
++  it('propagates a failed build result', () => {
++    const dir = mkdtempSync(join(tmpdir(), 'testbed-'));
++    try {
++      const failing: DockerExecutor = {
++        build: () => ({ status: 'failed', output: 'boom' }),
++        run: () => ({ status: 'ok', output: '' }),
++      };
++      const built = buildImage({ harness: 'codex', version: '0.155.1', workDir: dir, exec: failing });
++      expect(built.result).toEqual({ status: 'failed', output: 'boom' });
++    } finally {
++      rmSync(dir, { recursive: true, force: true });
++    }
++  });
++
++  it('rejects unknown harnesses with a clear error', () => {
++    const dir = mkdtempSync(join(tmpdir(), 'testbed-'));
++    const { exec } = recordingExec();
++    try {
++      expect(() => buildImage({ harness: 'no-such-harness', version: '1.0.0', workDir: dir, exec })).toThrow(
++        /unknown harness/
++      );
++    } finally {
++      rmSync(dir, { recursive: true, force: true });
++    }
++  });
++});
+\ No newline at end of file
+diff --git a/test/tools/testbed.ts b/test/tools/testbed.ts
+new file mode 100644
+index 0000000..42235de
+--- /dev/null
++++ b/test/tools/testbed.ts
+@@ -0,0 +1,144 @@
++// test/tools/testbed.ts
++//
++// Docker testbed core: generate per-harness Dockerfiles, build images, and
++// run harnesses' headless commands inside containers. Consumes the harness
++// version manifest (test/tools/manifest.ts); never imports from src/ (Task 1
++// ruling — even type-only src imports break the tools tsconfig build).
++import { spawnSync } from 'node:child_process';
++import { mkdirSync, writeFileSync } from 'node:fs';
++import { join } from 'node:path';
++import { loadManifest } from './manifest';
++
++export function imageTag(harness: string, version: string): string {
++  return `harness-hub/${harness}:${version}`;
++}
++
++export function dockerfileFor(harness: string, version: string, method: string, pkg: string | undefined): string {
++  if (method === 'npm') {
++    return `FROM node:22-slim
++RUN npm install -g ${pkg}@${version}
++WORKDIR /repo
++ENTRYPOINT ["sh", "-c"]
++`;
++  }
++  if (method === 'fhs-wrapper') {
++    // Cursor: install script into a plain image; `agent` lands on PATH.
++    return `FROM node:22-slim
++RUN apt-get update && apt-get install -y curl && curl -fsSL https://cursor.com/install | bash
++WORKDIR /repo
++ENTRYPOINT ["sh", "-c"]
++`;
++  }
++  // git / unknown → placeholder that documents the harness's own install path.
++  return `FROM node:22-slim
++# install ${harness}@${version} per its own instructions
++WORKDIR /repo
++ENTRYPOINT ["sh", "-c"]
++`;
++}
++
++export function imageName(id: string): string {
++  return id.replace(/[^a-z0-9.-]/g, '-');
++}
++
++// Prompt-parameterized headless invocations, mirroring PROBE_COMMANDS shapes.
++export const HEADLESS_COMMANDS: Record<string, (repoRoot: string, prompt: string) => { cmd: string; args: string[] }> = {
++  'claude-code': (_r, p) => ({ cmd: 'claude', args: ['-p', p] }),
++  'cursor-cli': (r, p) => ({ cmd: 'agent', args: ['-p', p, '--mode', 'ask', '--trust', '--workspace', r] }),
++  opencode: (_r, p) => ({ cmd: 'opencode', args: ['run', p] }),
++  codex: (_r, p) => ({ cmd: 'codex', args: ['exec', p] }),
++  hermes: (_r, p) => ({ cmd: 'hermes', args: ['run', p] }),
++  pi: (_r, p) => ({ cmd: 'pi', args: ['-p', p] }),
++  deepseek: (_r, p) => ({ cmd: 'dsh', args: ['run', p] }),
++  cursor: (_r, p) => ({ cmd: 'agent', args: ['-p', p] }),
++};
++
++export interface DockerExecutor {
++  build(tag: string, contextDir: string): { status: 'ok' | 'failed'; output: string };
++  run(tag: string, mounts: { repoRoot: string; homeDir: string }, command: string): { status: 'ok' | 'failed'; output: string };
++}
++
++export const dockerExecutor: DockerExecutor = {
++  build(tag, contextDir) {
++    const r = spawnSync('docker', ['build', '-t', tag, contextDir], { encoding: 'utf8', timeout: 600000 });
++    // stdout/stderr are undefined when the spawn itself fails (ENOENT, etc.).
++    return { status: r.status === 0 ? 'ok' : 'failed', output: (r.stdout ?? '') + (r.stderr ?? '') };
++  },
++  run(tag, mounts, command) {
++    const r = spawnSync('docker', [
++      'run', '--rm',
++      '-v', `${mounts.repoRoot}:/repo`,
++      '-v', `${mounts.homeDir}:/root`,
++      '-w', '/repo',
++      tag, command,
++    ], { encoding: 'utf8', timeout: 600000 });
++    return { status: r.status === 0 ? 'ok' : 'failed', output: (r.stdout ?? '') + (r.stderr ?? '') };
++  },
++};
++
++export interface TestbedBuildInput {
++  harness: string;
++  version: string;
++  workDir: string;
++  exec?: DockerExecutor;
++}
++
++export function buildImage(input: TestbedBuildInput): { tag: string; result: { status: 'ok' | 'failed'; output: string } } {
++  const exec = input.exec ?? dockerExecutor;
++  const m = loadManifest();
++  const entry = m[input.harness];
++  if (!entry) throw new Error(`testbed: unknown harness "${input.harness}"`);
++  const method = entry.install.method;
++  const pkg = entry.install.package;
++  const tag = imageTag(imageName(input.harness), input.version);
++  const contextDir = join(input.workDir, 'context');
++  mkdirSync(contextDir, { recursive: true });
++  writeFileSync(join(contextDir, 'Dockerfile'), dockerfileFor(input.harness, input.version, method, pkg));
++  return { tag, result: exec.build(tag, contextDir) };
++}
++
++export interface TestbedRunInput {
++  harness: string;
++  version: string;
++  prompt: string;
++  repoRoot: string;
++  homeDir: string;
++  workDir: string;
++  exec?: DockerExecutor;
++}
++
++export function runHarness(input: TestbedRunInput): { status: 'ok' | 'failed'; output: string } {
++  const exec = input.exec ?? dockerExecutor;
++  const make = HEADLESS_COMMANDS[input.harness];
++  if (!make) throw new Error(`testbed: no headless command for "${input.harness}"`);
++  const tag = imageTag(imageName(input.harness), input.version);
++  const { cmd, args } = make('/repo', input.prompt);
++  // The image ENTRYPOINT is ["sh", "-c"], so the command string is re-parsed
++  // by a shell: flag tokens stay bare, value tokens are JSON-quoted (double
++  // quotes) so prompts with spaces survive. Values containing $/backticks
++  // would still be shell-expanded — developer-provided prompts only.
++  return exec.run(tag, { repoRoot: input.repoRoot, homeDir: input.homeDir }, `${cmd} ${args.map((a) => (a.startsWith('-') ? a : JSON.stringify(a))).join(' ')}`);
++}
++
++const USAGE = `usage: testbed <command>
++  testbed run     <harness> <version> --prompt "…" --repo <dir> --home <dir>
++  testbed session <harness> <version> --resume <id> --prompt "…"
++  testbed matrix  <harness> --versions a,b --prompt "…"
++`;
++
++export async function main(argv: string[]): Promise<number> {
++  const [cmd, harness, ...rest] = argv;
++  if (cmd === 'run' && harness) {
++    const prompt = rest.includes('--prompt') ? rest[rest.indexOf('--prompt') + 1] : '';
++    const repoRoot = rest.includes('--repo') ? rest[rest.indexOf('--repo') + 1] : process.cwd();
++    const homeDir = rest.includes('--home') ? rest[rest.indexOf('--home') + 1] : join(process.cwd(), 'home');
++    const version = rest[0] ?? '';
++    const built = buildImage({ harness, version, workDir: join(process.cwd(), '.testbed') });
++    if (built.result.status !== 'ok') { console.error(built.result.output); return 1; }
++    const r = runHarness({ harness, version, prompt, repoRoot, homeDir, workDir: join(process.cwd(), '.testbed') });
++    console.log(r.output);
++    return r.status === 'ok' ? 0 : 1;
++  }
++  console.error(USAGE);
++  return cmd ? 1 : 0;
++}
+\ No newline at end of file

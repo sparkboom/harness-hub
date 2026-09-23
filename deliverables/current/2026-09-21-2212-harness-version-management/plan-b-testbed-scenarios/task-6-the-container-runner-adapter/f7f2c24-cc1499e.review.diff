@@ -1,0 +1,81 @@
+# Review package: f7f2c24..cc1499e
+
+## Commits
+cc1499e feat(verify): container runner adapter over the testbed
+
+## Files changed
+ test/tools/verify/containerRunner.test.ts | 18 +++++++++++++++
+ test/tools/verify/containerRunner.ts      | 38 +++++++++++++++++++++++++++++++
+ 2 files changed, 56 insertions(+)
+
+## Diff
+diff --git a/test/tools/verify/containerRunner.test.ts b/test/tools/verify/containerRunner.test.ts
+new file mode 100644
+index 0000000..31987f1
+--- /dev/null
++++ b/test/tools/verify/containerRunner.test.ts
+@@ -0,0 +1,18 @@
++// test/tools/verify/containerRunner.test.ts
++import { describe, it, expect } from 'vitest';
++import { containerRunner } from './containerRunner';
++
++describe('containerRunner', () => {
++  it('has kind container and passes through run', async () => {
++    const runner = containerRunner({
++      build: () => ({ status: 'ok', output: '' }),
++      run: () => ({ status: 'ok', output: 'done' }),
++    });
++    expect(runner.kind).toBe('container');
++    const res = await runner.run({
++      harnessId: 'codex', version: '0.155.1',
++      repoRoot: '/tmp/repo', homeDir: '/tmp/home', prompt: 'x',
++    });
++    expect(res.status).toBe('ok');
++  });
++});
+\ No newline at end of file
+diff --git a/test/tools/verify/containerRunner.ts b/test/tools/verify/containerRunner.ts
+new file mode 100644
+index 0000000..0f32fc7
+--- /dev/null
++++ b/test/tools/verify/containerRunner.ts
+@@ -0,0 +1,38 @@
++// test/tools/verify/containerRunner.ts
++//
++// The `container` Runner: builds the harness image via the testbed (Task 5)
++// and runs the harness's headless command inside a container. An injected
++// DockerExecutor (optional) keeps tests off real docker.
++//
++// Task 4 ruling: Runner.run implementations must never throw — unexpected
++// failures (e.g. mkdtempSync, manifest load) are converted into a failed
++// RunResult so runScenario's snapshot/predicate pipeline still completes.
++import { mkdtempSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import type { Runner, RunContext, RunResult } from './runner';
++import { buildImage, runHarness, type DockerExecutor } from '../testbed';
++
++export function containerRunner(exec?: DockerExecutor): Runner {
++  const executor = exec;
++  return {
++    kind: 'container',
++    async run(ctx: RunContext): Promise<RunResult> {
++      try {
++        const workDir = mkdtempSync(join(tmpdir(), 'hh-testbed-'));
++        const built = buildImage({ harness: ctx.harnessId, version: ctx.version, workDir, exec: executor });
++        if (built.result.status !== 'ok') {
++          return { status: 'failed', output: built.result.output, error: `docker build failed for ${built.tag}` };
++        }
++        const r = runHarness({
++          harness: ctx.harnessId, version: ctx.version, prompt: ctx.prompt,
++          repoRoot: ctx.repoRoot, homeDir: ctx.homeDir, workDir, exec: executor,
++        });
++        return r.status === 'ok' ? { status: 'ok', output: r.output } : { status: 'failed', output: r.output };
++      } catch (e) {
++        // Task 4 ruling: never throw out of run(); surface as a failed RunResult.
++        return { status: 'failed', output: '', error: e instanceof Error ? e.message : String(e) };
++      }
++    },
++  };
++}
+\ No newline at end of file

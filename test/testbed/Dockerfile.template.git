@@ -1,0 +1,4 @@
+# Template for git-installed harnesses. Install path is harness-specific; this
+# is a committed placeholder documenting the shape, not a working build.
+FROM node:22-slim
+WORKDIR /repo

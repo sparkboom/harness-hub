@@ -30,7 +30,7 @@ const MANIFEST_CANDIDATES = [
   join(__dirname, '..', '..', '..', 'config', 'config.json'), // compiled: test/tools/dist → repo root
 ];
 
-const MANIFEST_PATH =
+export const MANIFEST_PATH =
   MANIFEST_CANDIDATES.find((p) => existsSync(p)) ?? MANIFEST_CANDIDATES[MANIFEST_CANDIDATES.length - 1];
 
 interface ManifestShape {
@@ -40,4 +40,24 @@ interface ManifestShape {
 export function loadManifest(): Record<string, HarnessManifestEntry> {
   const raw = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8')) as ManifestShape;
   return raw.harness.versions;
+}
+
+export interface ManifestRange {
+  profile: string;
+  min: string;
+  max: string | null;
+  status: 'verified' | 'unverified';
+  verifiedDate?: string;
+  caveat?: string;
+  review?: 'automated' | 'manual';
+}
+
+export interface ManifestVersionEntry {
+  displayName: string;
+  install: { method: string; package?: string; url?: string };
+  ranges: ManifestRange[];
+}
+
+export function loadVersionEntries(): Record<string, ManifestVersionEntry> {
+  return loadManifest() as unknown as Record<string, ManifestVersionEntry>;
 }

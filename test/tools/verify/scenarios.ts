@@ -1,0 +1,168 @@
+// test/tools/verify/scenarios.ts
+//
+// S1–S5 convention-verification scenario suite, defined as data.
+// `HarnessId` is imported from `./schema` (not `src/harnesses`) per the
+// Task 1 ruling: test/tools production code must not import from src/,
+// even for types (TS6059 under the tools tsconfig rootDir). schema.ts
+// exports a drift-guarded copy of the 8-member union.
+import type { HarnessId, Scenario, ScenarioContext, Predicate } from './schema';
+
+const ALL_CLI: HarnessId[] = ['claude-code', 'codex', 'opencode', 'hermes', 'pi', 'deepseek', 'cursor-cli'];
+
+function fileInDelta(re: RegExp): Predicate {
+  return (ctx) => {
+    const match = Object.keys(ctx.repo.files).find((p) => re.test(p));
+    return match
+      ? { pass: true, reason: `found ${match}` }
+      : { pass: false, reason: `no file matching ${re} in repo snapshot` };
+  };
+}
+
+function fileContentIncludes(path: string, needle: string): Predicate {
+  return (ctx) => {
+    const f = ctx.repo.files[path];
+    if (!f || f.type !== 'file') return { pass: false, reason: `${path} missing or not a file` };
+    return (f.content ?? '').includes(needle)
+      ? { pass: true, reason: `${path} contains ${JSON.stringify(needle)}` }
+      : { pass: false, reason: `${path} does not contain ${JSON.stringify(needle)}` };
+  };
+}
+
+const ZEBRA_DOC = 'zebra-9f3k2';
+const ZEBRA_SKILL = 'zebra-skill';
+const COD_CANARY = 'COD-X7K9Z';
+
+function zebraSkillBody(): string {
+  return [
+    '---',
+    `name: ${ZEBRA_SKILL}`,
+    'description: Writes the project marker on request.',
+    '---',
+    `When invoked, write the exact string "${COD_CANARY}" into a file named marker.txt in the repo root.`,
+    '',
+  ].join('\n');
+}
+
+export const SCENARIO_SUITE: Record<string, Scenario> = {
+  'agentsdoc-load-canary': {
+    id: 'agentsdoc-load-canary',
+    conventionUnderTest: 'agentsDoc',
+    harnessCompat: ALL_CLI,
+    setup: {
+      files: [{
+        path: 'AGENTS.md',
+        content: `# Project conventions\nWhen asked to create a specification document, name the file "${ZEBRA_DOC}.spec.md" (that exact filename, no other).\n`,
+      }],
+      canary: `${ZEBRA_DOC}.spec.md`,
+    },
+    prompt: 'Create a specification document that plans the scaffolding of a JavaScript library.',
+    predicate: fileInDelta(new RegExp(`${ZEBRA_DOC}\\.spec\\.md`)),
+    evidenceLevels: ['canary'],
+  },
+
+  'agentsdoc-behavioral': {
+    id: 'agentsdoc-behavioral',
+    conventionUnderTest: 'agentsDoc',
+    harnessCompat: ALL_CLI,
+    setup: {
+      files: [{
+        path: 'AGENTS.md',
+        content: '# Project conventions\nWhen creating a specification document, use the `.spec.md` extension and save it to the project root.\n',
+      }],
+    },
+    prompt: 'Create a specification document that plans the scaffolding of a JavaScript library.',
+    predicate: fileInDelta(/^[^/]+\.spec\.md$/),
+    evidenceLevels: ['behavioral'],
+  },
+
+  'skill-wiring': {
+    id: 'skill-wiring',
+    conventionUnderTest: 'skills',
+    harnessCompat: [...ALL_CLI, 'cursor'],
+    setup: {
+      files: [{
+        path: '.agents/skills/writing-tests/SKILL.md',
+        content: '---\nname: writing-tests\ndescription: Write failing tests before implementation.\n---\nWrite the failing test first.\n',
+      }],
+    },
+    prompt: '',
+    predicate: (ctx) => {
+      const native = ctx.repo.files['.agents/skills/writing-tests/SKILL.md'];
+      const claude = ctx.repo.files['.claude/skills/writing-tests'];
+      const claudeOk = claude && claude.type === 'symlink' && claude.target?.includes('.agents/skills/writing-tests');
+      if (native && native.type === 'file') return { pass: true, reason: 'native .agents/skills entry present' };
+      if (claudeOk) return { pass: true, reason: '.claude/skills symlink → canon present' };
+      return { pass: false, reason: 'neither native skills dir nor claude symlink present' };
+    },
+    evidenceLevels: ['deterministic'],
+  },
+
+  'skill-explicit-invocation': {
+    id: 'skill-explicit-invocation',
+    conventionUnderTest: 'skills',
+    harnessCompat: [...ALL_CLI, 'cursor'],
+    setup: { files: [{ path: `.agents/skills/${ZEBRA_SKILL}/SKILL.md`, content: zebraSkillBody() }], canary: COD_CANARY },
+    prompt: `Use the ${ZEBRA_SKILL} skill.`,
+    predicate: fileContentIncludes('marker.txt', COD_CANARY),
+    evidenceLevels: ['canary'],
+  },
+
+  'skill-auto-discovery': {
+    id: 'skill-auto-discovery',
+    conventionUnderTest: 'skills',
+    harnessCompat: ALL_CLI,
+    setup: {
+      files: [{
+        path: `.agents/skills/${ZEBRA_SKILL}/SKILL.md`,
+        content: '---\nname: ' + ZEBRA_SKILL + '\ndescription: Use whenever the user asks to summarize a project. Then write the exact string "' + COD_CANARY + '" into marker.txt at the repo root.\n---\nSummarize the project and mark the marker file.\n',
+      }],
+      canary: COD_CANARY,
+    },
+    prompt: 'Summarize this project.',
+    predicate: fileContentIncludes('marker.txt', COD_CANARY),
+    evidenceLevels: ['canary'],
+  },
+
+  'skill-scoping': {
+    id: 'skill-scoping',
+    conventionUnderTest: 'skills-scoping',
+    harnessCompat: ['cursor', 'cursor-cli', 'opencode'],
+    setup: {
+      files: [{
+        path: 'apps/web/.agents/skills/web-skill/SKILL.md',
+        content: '---\nname: web-skill\ndescription: Use when working in apps/web.\n---\n(content)\n',
+      }],
+    },
+    prompt: 'Work on the backend service and list which skills are available to you.',
+    predicate: () => ({ pass: false, reason: 'semantic — requires a judge' }),
+    rubric: [
+      { id: 'scoping-correct', text: 'was web-skill correctly scoped to apps/web only (not surfaced for backend work)?' },
+      { id: 'list-reflects-scoping', text: "did the harness's reported skill list reflect the scoping?" },
+    ],
+    evidenceLevels: ['rubric'],
+  },
+
+  'hermes-trust-gate': {
+    id: 'hermes-trust-gate',
+    conventionUnderTest: 'trustGate',
+    harnessCompat: ['hermes'],
+    setup: { files: [{ path: `.agents/skills/${ZEBRA_SKILL}/SKILL.md`, content: zebraSkillBody() }], canary: COD_CANARY },
+    prompt: `Use the ${ZEBRA_SKILL} skill.`,
+    predicate: (ctx) => {
+      const cfg = ctx.home.files['.hermes/config.yaml'];
+      if (!cfg || cfg.type !== 'file') return { pass: false, reason: '~/.hermes/config.yaml not written' };
+      // The trust ledger records the repo path as the harness saw it: the host
+      // path in human mode, or the container mount path (/repo) in
+      // container-mode runs. Accept either.
+      const content = cfg.content ?? '';
+      if (content.includes(ctx.repoRoot)) {
+        return { pass: true, reason: 'trust ledger gained the repo path' };
+      }
+      if (content.includes('/repo')) {
+        return { pass: true, reason: 'trust ledger gained the container mount path /repo' };
+      }
+      return { pass: false, reason: 'repo path not found in trust ledger' };
+    },
+    evidenceLevels: ['behavioral'],
+  },
+};

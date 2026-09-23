@@ -1,0 +1,1468 @@
+# Review package: ac31029..3dc7724
+
+## Commits
+3dc7724 test: verify testbed + scenario framework end-to-end
+572fc0b fix(reconcile): guard empty ranges and fail loudly on upstream errors
+8489bc5 feat(reconcile): --check drift gate and --record review write-back
+c0b686b feat(verify): assemble a per-version confidence report (advisory)
+a1f07f1 test(verify): assert humanRunner awaits the human ack
+dc0a18a feat(verify): human runner for manual GUI/IDE review
+cc1499e feat(verify): container runner adapter over the testbed
+f7f2c24 docs(testbed): document cursor entry's intentional departure from PROBE_COMMANDS mirroring
+3045784 feat(testbed): Dockerfile generation and testbed run/session/matrix core
+3355572 fix(verify): runScenario survives a throwing runner
+7c35fe1 feat(verify): add runner interface and runScenario orchestration
+8132d6c feat(verify): define the S1-S5 convention-verification scenario suite
+4e253ec feat(verify): add repo/home snapshot and diff
+8d1cf02 feat(verify): add scenario schema types
+
+## Files changed
+ test/testbed/Dockerfile.template.git      |   4 +
+ test/testbed/Dockerfile.template.npm      |   7 ++
+ test/tools/manifest.ts                    |  22 +++-
+ test/tools/reconcile.mjs                  |  17 ++++
+ test/tools/reconcile.test.ts              |  50 ++++++++++
+ test/tools/reconcile.ts                   | 133 ++++++++++++++++++++++++
+ test/tools/report.test.ts                 |  25 +++++
+ test/tools/report.ts                      |  38 +++++++
+ test/tools/testbed.mjs                    |  17 ++++
+ test/tools/testbed.test.ts                | 112 +++++++++++++++++++++
+ test/tools/testbed.ts                     | 150 ++++++++++++++++++++++++++++
+ test/tools/verify/containerRunner.test.ts |  18 ++++
+ test/tools/verify/containerRunner.ts      |  38 +++++++
+ test/tools/verify/runner-human.test.ts    |  24 +++++
+ test/tools/verify/runner-human.ts         |  50 ++++++++++
+ test/tools/verify/runner.test.ts          |  63 ++++++++++++
+ test/tools/verify/runner.ts               |  86 ++++++++++++++++
+ test/tools/verify/scenarios.test.ts       |  30 ++++++
+ test/tools/verify/scenarios.ts            | 161 ++++++++++++++++++++++++++++++
+ test/tools/verify/schema.test.ts          |  31 ++++++
+ test/tools/verify/schema.ts               |  89 +++++++++++++++++
+ test/tools/verify/snapshot.test.ts        |  33 ++++++
+ test/tools/verify/snapshot.ts             |  50 ++++++++++
+ 23 files changed, 1247 insertions(+), 1 deletion(-)
+
+## Diff
+diff --git a/test/testbed/Dockerfile.template.git b/test/testbed/Dockerfile.template.git
+new file mode 100644
+index 0000000..4da2b09
+--- /dev/null
++++ b/test/testbed/Dockerfile.template.git
+@@ -0,0 +1,4 @@
++# Template for git-installed harnesses. Install path is harness-specific; this
++# is a committed placeholder documenting the shape, not a working build.
++FROM node:22-slim
++WORKDIR /repo
+\ No newline at end of file
+diff --git a/test/testbed/Dockerfile.template.npm b/test/testbed/Dockerfile.template.npm
+new file mode 100644
+index 0000000..d66cf49
+--- /dev/null
++++ b/test/testbed/Dockerfile.template.npm
+@@ -0,0 +1,7 @@
++# Template for npm-installed harnesses (see test/tools/testbed.ts dockerfileFor).
++# Kept as a committed reference; the generator inlines the pinned version.
++FROM node:22-slim
++ARG PKG
++ARG VERSION
++RUN npm install -g ${PKG}@${VERSION}
++WORKDIR /repo
+\ No newline at end of file
+diff --git a/test/tools/manifest.ts b/test/tools/manifest.ts
+index 5c06636..69ebd28 100644
+--- a/test/tools/manifest.ts
++++ b/test/tools/manifest.ts
+@@ -23,21 +23,41 @@ export interface HarnessManifestEntry {
+ // test/tools/ code runs from two layouts: source under vitest (__dirname =
+ // <repo>/test/tools) and compiled via build:tools (__dirname =
+ // <repo>/test/tools/dist). The config sits at the repo root
+ // (<repo>/config/config.json), so probe candidates in order and use the first
+ // that exists.
+ const MANIFEST_CANDIDATES = [
+   join(__dirname, '..', '..', 'config', 'config.json'),       // source: test/tools → repo root
+   join(__dirname, '..', '..', '..', 'config', 'config.json'), // compiled: test/tools/dist → repo root
+ ];
+ 
+-const MANIFEST_PATH =
++export const MANIFEST_PATH =
+   MANIFEST_CANDIDATES.find((p) => existsSync(p)) ?? MANIFEST_CANDIDATES[MANIFEST_CANDIDATES.length - 1];
+ 
+ interface ManifestShape {
+   harness: { versions: Record<string, HarnessManifestEntry> };
+ }
+ 
+ export function loadManifest(): Record<string, HarnessManifestEntry> {
+   const raw = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8')) as ManifestShape;
+   return raw.harness.versions;
+ }
++
++export interface ManifestRange {
++  profile: string;
++  min: string;
++  max: string | null;
++  status: 'verified' | 'unverified';
++  verifiedDate?: string;
++  caveat?: string;
++  review?: 'automated' | 'manual';
++}
++
++export interface ManifestVersionEntry {
++  displayName: string;
++  install: { method: string; package?: string; url?: string };
++  ranges: ManifestRange[];
++}
++
++export function loadVersionEntries(): Record<string, ManifestVersionEntry> {
++  return loadManifest() as unknown as Record<string, ManifestVersionEntry>;
++}
+diff --git a/test/tools/reconcile.mjs b/test/tools/reconcile.mjs
+new file mode 100644
+index 0000000..208f2ca
+--- /dev/null
++++ b/test/tools/reconcile.mjs
+@@ -0,0 +1,17 @@
++import { createRequire } from 'node:module';
++import { existsSync } from 'node:fs';
++import { fileURLToPath } from 'node:url';
++import { dirname, join } from 'node:path';
++
++const here = dirname(fileURLToPath(import.meta.url));
++const entry = join(here, 'dist', 'reconcile.js');
++if (!existsSync(entry)) {
++  console.error('tools not built — run: npm run build:tools');
++  process.exit(1);
++}
++const require = createRequire(import.meta.url);
++const { main } = require(entry);
++main(process.argv.slice(2)).then((code) => process.exit(code), (err) => {
++  console.error(err instanceof Error ? err.message : String(err));
++  process.exit(1);
++});
+\ No newline at end of file
+diff --git a/test/tools/reconcile.test.ts b/test/tools/reconcile.test.ts
+new file mode 100644
+index 0000000..9338cb1
+--- /dev/null
++++ b/test/tools/reconcile.test.ts
+@@ -0,0 +1,50 @@
++// test/tools/reconcile.test.ts
++import { describe, it, expect } from 'vitest';
++import { checkLatest, formatCheck, isCoveredByVerified, type UpstreamResolver } from './reconcile';
++import type { ManifestVersionEntry } from './manifest';
++
++describe('isCoveredByVerified', () => {
++  const ranges = [
++    { profile: 'native-v1', min: '0.139.0', max: '0.155.0', status: 'verified' as const },
++    { profile: 'native-v1', min: '0.155.0', max: null, status: 'unverified' as const },
++  ];
++  it('returns true when latest is inside a verified range', () => {
++    expect(isCoveredByVerified('0.150.0', ranges)).toBe(true);
++  });
++  it('returns false when latest is outside all verified ranges', () => {
++    expect(isCoveredByVerified('0.155.1', ranges)).toBe(false);
++  });
++});
++
++describe('checkLatest', () => {
++  it('exits non-zero when any harness latest is outside verified ranges', async () => {
++    const resolver: UpstreamResolver = { latest: async () => '0.155.1' };
++    const res = await checkLatest(resolver);
++    // codex latest 0.155.1 is outside its verified range (0.139.0–0.155.0)
++    expect(res.exitCode).toBe(1);
++  });
++
++  it('does not crash when an entry has missing or empty ranges (drift)', async () => {
++    const entries: Record<string, ManifestVersionEntry> = {
++      'no-ranges': { displayName: 'No Ranges', install: { method: 'npm', package: 'x' }, ranges: [] },
++      'ranges-undefined': { displayName: 'Ranges Undefined', install: { method: 'npm', package: 'y' } } as ManifestVersionEntry,
++    };
++    const res = await checkLatest({ latest: async () => '1.2.3' }, entries);
++    expect(res.rows.every((r) => !r.covered)).toBe(true);
++    expect(res.exitCode).toBe(1);
++  });
++
++  it('reports a per-row upstream error (exit 2, no crash)', async () => {
++    const entries: Record<string, ManifestVersionEntry> = {
++      'some-harness': {
++        displayName: 'Some Harness', install: { method: 'npm', package: 'pkg' },
++        ranges: [{ profile: 'native-v1', min: '1.0.0', max: null, status: 'verified' }],
++      },
++    };
++    const res = await checkLatest({ latest: async () => { throw new Error('npm down'); } }, entries);
++    expect(res.exitCode).toBe(2);
++    expect(res.rows[0].error).toBe('npm down');
++    expect(res.rows[0].covered).toBe(false);
++    expect(formatCheck(res.rows)).toContain('ERR');
++  });
++});
+\ No newline at end of file
+diff --git a/test/tools/reconcile.ts b/test/tools/reconcile.ts
+new file mode 100644
+index 0000000..5f0f944
+--- /dev/null
++++ b/test/tools/reconcile.ts
+@@ -0,0 +1,133 @@
++import { spawnSync } from 'node:child_process';
++import { readFileSync, writeFileSync } from 'node:fs';
++import { gte, lt, valid, coerce } from 'semver';
++import { loadVersionEntries, MANIFEST_PATH, type ManifestRange, type ManifestVersionEntry } from './manifest';
++
++export function isCoveredByVerified(latest: string, ranges: ManifestRange[]): boolean {
++  const v = valid(latest) ?? coerce(latest)?.version;
++  if (!v) return false;
++  return ranges.some((r) => r.status === 'verified' && gte(v, r.min) && (r.max === null || lt(v, r.max)));
++}
++
++export interface UpstreamResolver {
++  latest(id: string): Promise<string | null>;
++}
++
++export const npmUpstream: UpstreamResolver = {
++  latest(id: string) {
++    const entry = loadVersionEntries()[id];
++    const pkg = entry?.install.package;
++    if (!pkg) return Promise.resolve(null);
++    const r = spawnSync('npm', ['view', pkg, 'version'], { encoding: 'utf8', timeout: 30000 });
++    // null means only "no package configured". A failed npm invocation is an
++    // infrastructure error — throw so --check fails loudly instead of reading
++    // the empty stdout as "no upstream version, therefore covered".
++    if (r.error) throw new Error(`reconcile: npm view failed for ${pkg}: ${r.error.message}`);
++    if (r.status !== 0) throw new Error(`reconcile: npm view failed for ${pkg}: ${(r.stderr ?? '').trim()}`);
++    const line = (r.stdout ?? '').split('\n')[0].trim();
++    return Promise.resolve(line || null);
++  },
++};
++
++export interface CheckRow {
++  id: string;
++  latest: string | null;
++  covered: boolean;
++  error?: string;
++}
++
++export async function checkLatest(
++  resolver: UpstreamResolver = npmUpstream,
++  entries: Record<string, ManifestVersionEntry> = loadVersionEntries(),
++): Promise<{ rows: CheckRow[]; exitCode: number }> {
++  const rows: CheckRow[] = [];
++  for (const id of Object.keys(entries).sort()) {
++    let latest: string | null = null;
++    let error: string | undefined;
++    try {
++      latest = await resolver.latest(id);
++    } catch (err) {
++      error = err instanceof Error ? err.message : String(err);
++    }
++    // Missing/empty ranges: nothing is verified — honest answer is drift.
++    let covered: boolean;
++    if (error !== undefined) covered = false;
++    else if (latest === null) covered = true; // no package configured — nothing to drift
++    else covered = isCoveredByVerified(latest, entries[id].ranges ?? []);
++    rows.push({ id, latest, covered, ...(error !== undefined ? { error } : {}) });
++  }
++  const errored = rows.some((r) => r.error !== undefined);
++  if (errored) return { rows, exitCode: 2 };
++  const drift = rows.some((r) => !r.covered);
++  return { rows, exitCode: drift ? 1 : 0 };
++}
++
++export function formatCheck(rows: CheckRow[]): string {
++  const pad = (s: string, w: number) => (s.length >= w ? s : s + ' '.repeat(w - s.length));
++  const lines = [pad('ID', 16) + pad('LATEST', 14) + 'COVERED'];
++  for (const r of rows) {
++    lines.push(pad(r.id, 16) + pad(r.latest ?? '?', 14) + (r.error !== undefined ? 'ERR' : r.covered ? 'yes' : 'NO'));
++  }
++  return lines.join('\n');
++}
++
++// Only mutation path for config.json. Flips an unverified range to verified, or
++// adds a new verified range when the version matches none.
++export function recordReview(harness: string, version: string): { changed: boolean; message: string } {
++  const path = MANIFEST_PATH;
++  const raw = JSON.parse(readFileSync(path, 'utf8')) as { harness: { versions: Record<string, { ranges: ManifestRange[] }> } };
++  const entry = raw.harness.versions[harness];
++  if (!entry) throw new Error(`reconcile: unknown harness "${harness}"`);
++  const v = valid(version) ?? coerce(version)?.version;
++  if (!v) throw new Error(`reconcile: unparseable version "${version}"`);
++
++  let changed = false;
++  const existing = entry.ranges.find((r) => gte(v, r.min) && (r.max === null || lt(v, r.max)));
++  if (existing) {
++    if (existing.status === 'unverified') {
++      existing.status = 'verified';
++      existing.verifiedDate = new Date().toISOString().slice(0, 10);
++      changed = true;
++    }
++  } else {
++    if (entry.ranges.length === 0) {
++      throw new Error(`reconcile: harness "${harness}" has no ranges to derive a profile from`);
++    }
++    // New range: insert after the last range whose min <= v, keeping order.
++    entry.ranges.push({ profile: entry.ranges[entry.ranges.length - 1].profile, min: v, max: null, status: 'verified', verifiedDate: new Date().toISOString().slice(0, 10) });
++    entry.ranges.sort((a, b) => (a.min < b.min ? -1 : 1));
++    changed = true;
++  }
++
++  if (changed) {
++    writeFileSync(path, JSON.stringify(raw, null, 2) + '\n', 'utf8');
++    return { changed: true, message: `recorded ${harness} ${v} as verified` };
++  }
++  return { changed: false, message: `${harness} ${v} is already verified — no change` };
++}
++
++export async function main(argv: string[]): Promise<number> {
++  const [cmd, ...rest] = argv;
++  if (cmd === '--check') {
++    try {
++      const res = await checkLatest();
++      console.log(formatCheck(res.rows));
++      return res.exitCode;
++    } catch (err) {
++      console.error(`reconcile: upstream check failed: ${err instanceof Error ? err.message : String(err)}`);
++      return 2;
++    }
++  }
++  if (cmd === '--record' && rest[0]) {
++    try {
++      const out = recordReview(rest[0], rest[1] ?? '');
++      console.log(out.message);
++      return 0;
++    } catch (err) {
++      console.error(err instanceof Error ? err.message : String(err));
++      return 1;
++    }
++  }
++  console.error('usage: reconcile --check | reconcile --record <harness> <version>');
++  return 1;
++}
+\ No newline at end of file
+diff --git a/test/tools/report.test.ts b/test/tools/report.test.ts
+new file mode 100644
+index 0000000..8a1c64d
+--- /dev/null
++++ b/test/tools/report.test.ts
+@@ -0,0 +1,25 @@
++import { describe, it, expect } from 'vitest';
++import { assembleReport } from './report';
++import type { ScenarioOutcome } from './verify/schema';
++
++const outcomes: ScenarioOutcome[] = [
++  { scenarioId: 'skill-wiring', result: true, runs: 1, passes: 1, evidence: ['deterministic'] },
++  { scenarioId: 'agentsdoc-load-canary', result: true, runs: 5, passes: 5, evidence: ['canary'] },
++  { scenarioId: 'agentsdoc-behavioral', result: true, runs: 10, passes: 8, evidence: ['behavioral'], note: 'control 2/10' },
++];
++
++describe('assembleReport', () => {
++  it('assembles outcomes into a report', () => {
++    const r = assembleReport('codex', '0.155.1', outcomes);
++    expect(r.harnessId).toBe('codex');
++    expect(r.version).toBe('0.155.1');
++    expect(r.scenarios).toHaveLength(3);
++  });
++
++  it('derives an advisory confidence from the highest evidence level', () => {
++    expect(assembleReport('codex', '0.155.1', outcomes).confidence).toBe('high');
++    expect(assembleReport('codex', '0.155.1', [
++      { scenarioId: 's', result: true, runs: 10, passes: 6, evidence: ['behavioral'] },
++    ]).confidence).toBe('medium');
++  });
++});
+\ No newline at end of file
+diff --git a/test/tools/report.ts b/test/tools/report.ts
+new file mode 100644
+index 0000000..2360ede
+--- /dev/null
++++ b/test/tools/report.ts
+@@ -0,0 +1,38 @@
++import type { ScenarioOutcome } from './verify/schema';
++
++export interface Report {
++  harnessId: string;
++  version: string;
++  scenarios: ScenarioOutcome[];
++  confidence: 'low' | 'medium' | 'high';
++}
++
++// TODO(plan-c): the full confidence formula (evidence levels × run counts ×
++// per-question decomposition) is specified in evidence-and-judges.md and owned
++// by Plan C. This placeholder is advisory only and must be replaced without
++// changing the Report shape.
++const LEVEL_RANK: Record<string, number> = {
++  deterministic: 0, gateway: 1, canary: 2, behavioral: 3, rubric: 4,
++};
++
++export function assembleReport(harnessId: string, version: string, outcomes: ScenarioOutcome[]): Report {
++  let best = Infinity;
++  for (const o of outcomes) {
++    for (const lvl of o.evidence) {
++      best = Math.min(best, LEVEL_RANK[lvl] ?? 4);
++    }
++  }
++  const confidence = best <= 1 ? 'high' : best <= 3 ? 'medium' : 'low';
++  return { harnessId, version, scenarios: outcomes, confidence };
++}
++
++export function formatReport(report: Report): string {
++  const lines = [`harness: ${report.harnessId}`, `version: ${report.version}`];
++  for (const s of report.scenarios) {
++    const runInfo = s.runs > 1 ? ` runs: ${s.passes}/${s.runs}` : '';
++    const note = s.note ? ` note: ${s.note}` : '';
++    lines.push(`  - ${s.scenarioId.padEnd(28)} result: ${s.result ? 'PASS' : 'FAIL'}${runInfo} evidence: ${s.evidence.join(',')}${note}`);
++  }
++  lines.push(`confidence: ${report.confidence}   # advisory only`);
++  return lines.join('\n');
++}
+\ No newline at end of file
+diff --git a/test/tools/testbed.mjs b/test/tools/testbed.mjs
+new file mode 100644
+index 0000000..8c26741
+--- /dev/null
++++ b/test/tools/testbed.mjs
+@@ -0,0 +1,17 @@
++import { createRequire } from 'node:module';
++import { existsSync } from 'node:fs';
++import { fileURLToPath } from 'node:url';
++import { dirname, join } from 'node:path';
++
++const here = dirname(fileURLToPath(import.meta.url));
++const entry = join(here, 'dist', 'testbed.js');
++if (!existsSync(entry)) {
++  console.error('tools not built — run: npm run build:tools');
++  process.exit(1);
++}
++const require = createRequire(import.meta.url);
++const { main } = require(entry);
++main(process.argv.slice(2)).then((code) => process.exit(code), (err) => {
++  console.error(err instanceof Error ? err.message : String(err));
++  process.exit(1);
++});
+\ No newline at end of file
+diff --git a/test/tools/testbed.test.ts b/test/tools/testbed.test.ts
+new file mode 100644
+index 0000000..201dfd8
+--- /dev/null
++++ b/test/tools/testbed.test.ts
+@@ -0,0 +1,112 @@
++// test/tools/testbed.test.ts
++//
++// Unit tests for the Docker testbed core. The real dockerExecutor is never
++// invoked: every build/run test injects a recording fake DockerExecutor, so
++// these tests never touch docker.
++import { describe, it, expect } from 'vitest';
++import { dockerfileFor, imageTag, HEADLESS_COMMANDS, runHarness, buildImage, type DockerExecutor } from './testbed';
++import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import { loadManifest } from './manifest';
++
++function recordingExec() {
++  const builds: Array<{ tag: string; contextDir: string }> = [];
++  const runs: Array<{ tag: string; command: string }> = [];
++  const exec: DockerExecutor = {
++    build: (tag, contextDir) => {
++      builds.push({ tag, contextDir });
++      return { status: 'ok', output: '' };
++    },
++    run: (tag, _mounts, command) => {
++      runs.push({ tag, command });
++      return { status: 'ok', output: '' };
++    },
++  };
++  return { exec, builds, runs };
++}
++
++describe('testbed', () => {
++  it('tags images by harness/version', () => {
++    expect(imageTag('codex', '0.155.1')).toBe('harness-hub/codex:0.155.1');
++  });
++
++  it('generates an npm Dockerfile pinning the exact version', () => {
++    const d = dockerfileFor('codex', '0.155.1', 'npm', '@openai/codex');
++    expect(d).toContain('npm install -g @openai/codex@0.155.1');
++  });
++
++  it('generates an fhs-wrapper Dockerfile using the harness install URL', () => {
++    const d = dockerfileFor('cursor', '3.0.0', 'fhs-wrapper', undefined);
++    expect(d).toContain('https://cursor.com/install');
++  });
++
++  it('maps claude-code to a -p prompt invocation', () => {
++    const spec = HEADLESS_COMMANDS['claude-code']('/repo', 'hello');
++    expect(spec.cmd).toBe('claude');
++    expect(spec.args).toEqual(['-p', 'hello']);
++  });
++
++  it('runs the headless command inside the container via the executor', () => {
++    const { exec, runs } = recordingExec();
++    const r = runHarness({
++      harness: 'claude-code', version: '2.1.272', prompt: 'hi',
++      repoRoot: '/tmp/repo', homeDir: '/tmp/home', workDir: '/tmp/w', exec,
++    });
++    expect(r.status).toBe('ok');
++    expect(runs[0]?.command).toContain('claude -p');
++    expect(runs[0]?.command).toContain('"hi"');
++  });
++
++  it('keeps flags bare and quotes value tokens for the sh -c entrypoint', () => {
++    const { exec, runs } = recordingExec();
++    runHarness({
++      harness: 'cursor-cli', version: '3.0.0', prompt: 'two words',
++      repoRoot: '/tmp/repo', homeDir: '/tmp/home', workDir: '/tmp/w', exec,
++    });
++    const command = runs[0]?.command ?? '';
++    expect(command).toContain('agent -p "two words"');
++    expect(command).toContain('--workspace "/repo"');
++  });
++
++  it('builds an image from the manifest entry via the injected executor', () => {
++    const dir = mkdtempSync(join(tmpdir(), 'testbed-'));
++    const { exec, builds } = recordingExec();
++    try {
++      const built = buildImage({ harness: 'codex', version: '0.155.1', workDir: dir, exec });
++      expect(built.tag).toBe('harness-hub/codex:0.155.1');
++      expect(builds).toEqual([{ tag: 'harness-hub/codex:0.155.1', contextDir: join(dir, 'context') }]);
++      const pkg = loadManifest()['codex'].install.package ?? '';
++      const dockerfile = readFileSync(join(dir, 'context', 'Dockerfile'), 'utf8');
++      expect(dockerfile).toContain(`npm install -g ${pkg}@0.155.1`);
++    } finally {
++      rmSync(dir, { recursive: true, force: true });
++    }
++  });
++
++  it('propagates a failed build result', () => {
++    const dir = mkdtempSync(join(tmpdir(), 'testbed-'));
++    try {
++      const failing: DockerExecutor = {
++        build: () => ({ status: 'failed', output: 'boom' }),
++        run: () => ({ status: 'ok', output: '' }),
++      };
++      const built = buildImage({ harness: 'codex', version: '0.155.1', workDir: dir, exec: failing });
++      expect(built.result).toEqual({ status: 'failed', output: 'boom' });
++    } finally {
++      rmSync(dir, { recursive: true, force: true });
++    }
++  });
++
++  it('rejects unknown harnesses with a clear error', () => {
++    const dir = mkdtempSync(join(tmpdir(), 'testbed-'));
++    const { exec } = recordingExec();
++    try {
++      expect(() => buildImage({ harness: 'no-such-harness', version: '1.0.0', workDir: dir, exec })).toThrow(
++        /unknown harness/
++      );
++    } finally {
++      rmSync(dir, { recursive: true, force: true });
++    }
++  });
++});
+\ No newline at end of file
+diff --git a/test/tools/testbed.ts b/test/tools/testbed.ts
+new file mode 100644
+index 0000000..cc2f696
+--- /dev/null
++++ b/test/tools/testbed.ts
+@@ -0,0 +1,150 @@
++// test/tools/testbed.ts
++//
++// Docker testbed core: generate per-harness Dockerfiles, build images, and
++// run harnesses' headless commands inside containers. Consumes the harness
++// version manifest (test/tools/manifest.ts); never imports from src/ (Task 1
++// ruling — even type-only src imports break the tools tsconfig build).
++import { spawnSync } from 'node:child_process';
++import { mkdirSync, writeFileSync } from 'node:fs';
++import { join } from 'node:path';
++import { loadManifest } from './manifest';
++
++export function imageTag(harness: string, version: string): string {
++  return `harness-hub/${harness}:${version}`;
++}
++
++export function dockerfileFor(harness: string, version: string, method: string, pkg: string | undefined): string {
++  if (method === 'npm') {
++    return `FROM node:22-slim
++RUN npm install -g ${pkg}@${version}
++WORKDIR /repo
++ENTRYPOINT ["sh", "-c"]
++`;
++  }
++  if (method === 'fhs-wrapper') {
++    // Cursor: install script into a plain image; `agent` lands on PATH.
++    return `FROM node:22-slim
++RUN apt-get update && apt-get install -y curl && curl -fsSL https://cursor.com/install | bash
++WORKDIR /repo
++ENTRYPOINT ["sh", "-c"]
++`;
++  }
++  // git / unknown → placeholder that documents the harness's own install path.
++  return `FROM node:22-slim
++# install ${harness}@${version} per its own instructions
++WORKDIR /repo
++ENTRYPOINT ["sh", "-c"]
++`;
++}
++
++export function imageName(id: string): string {
++  return id.replace(/[^a-z0-9.-]/g, '-');
++}
++
++// Prompt-parameterized headless invocations, mirroring PROBE_COMMANDS shapes.
++export const HEADLESS_COMMANDS: Record<string, (repoRoot: string, prompt: string) => { cmd: string; args: string[] }> = {
++  'claude-code': (_r, p) => ({ cmd: 'claude', args: ['-p', p] }),
++  'cursor-cli': (r, p) => ({ cmd: 'agent', args: ['-p', p, '--mode', 'ask', '--trust', '--workspace', r] }),
++  opencode: (_r, p) => ({ cmd: 'opencode', args: ['run', p] }),
++  codex: (_r, p) => ({ cmd: 'codex', args: ['exec', p] }),
++  hermes: (_r, p) => ({ cmd: 'hermes', args: ['run', p] }),
++  pi: (_r, p) => ({ cmd: 'pi', args: ['-p', p] }),
++  deepseek: (_r, p) => ({ cmd: 'dsh', args: ['run', p] }),
++  // cursor (IDE) is human-only (spec R5) and is never dispatched through the
++  // container runner. This entry documents the in-container agent CLI shape
++  // for completeness but intentionally departs from PROBE_COMMANDS mirroring:
++  // probe's 'cursor' entry (standalone agent CLI with --mode ask --trust
++  // --workspace) is mirrored by the 'cursor-cli' entry above, not this one.
++  // Consequently this entry is never exercised by `testbed run`.
++  cursor: (_r, p) => ({ cmd: 'agent', args: ['-p', p] }),
++};
++
++export interface DockerExecutor {
++  build(tag: string, contextDir: string): { status: 'ok' | 'failed'; output: string };
++  run(tag: string, mounts: { repoRoot: string; homeDir: string }, command: string): { status: 'ok' | 'failed'; output: string };
++}
++
++export const dockerExecutor: DockerExecutor = {
++  build(tag, contextDir) {
++    const r = spawnSync('docker', ['build', '-t', tag, contextDir], { encoding: 'utf8', timeout: 600000 });
++    // stdout/stderr are undefined when the spawn itself fails (ENOENT, etc.).
++    return { status: r.status === 0 ? 'ok' : 'failed', output: (r.stdout ?? '') + (r.stderr ?? '') };
++  },
++  run(tag, mounts, command) {
++    const r = spawnSync('docker', [
++      'run', '--rm',
++      '-v', `${mounts.repoRoot}:/repo`,
++      '-v', `${mounts.homeDir}:/root`,
++      '-w', '/repo',
++      tag, command,
++    ], { encoding: 'utf8', timeout: 600000 });
++    return { status: r.status === 0 ? 'ok' : 'failed', output: (r.stdout ?? '') + (r.stderr ?? '') };
++  },
++};
++
++export interface TestbedBuildInput {
++  harness: string;
++  version: string;
++  workDir: string;
++  exec?: DockerExecutor;
++}
++
++export function buildImage(input: TestbedBuildInput): { tag: string; result: { status: 'ok' | 'failed'; output: string } } {
++  const exec = input.exec ?? dockerExecutor;
++  const m = loadManifest();
++  const entry = m[input.harness];
++  if (!entry) throw new Error(`testbed: unknown harness "${input.harness}"`);
++  const method = entry.install.method;
++  const pkg = entry.install.package;
++  const tag = imageTag(imageName(input.harness), input.version);
++  const contextDir = join(input.workDir, 'context');
++  mkdirSync(contextDir, { recursive: true });
++  writeFileSync(join(contextDir, 'Dockerfile'), dockerfileFor(input.harness, input.version, method, pkg));
++  return { tag, result: exec.build(tag, contextDir) };
++}
++
++export interface TestbedRunInput {
++  harness: string;
++  version: string;
++  prompt: string;
++  repoRoot: string;
++  homeDir: string;
++  workDir: string;
++  exec?: DockerExecutor;
++}
++
++export function runHarness(input: TestbedRunInput): { status: 'ok' | 'failed'; output: string } {
++  const exec = input.exec ?? dockerExecutor;
++  const make = HEADLESS_COMMANDS[input.harness];
++  if (!make) throw new Error(`testbed: no headless command for "${input.harness}"`);
++  const tag = imageTag(imageName(input.harness), input.version);
++  const { cmd, args } = make('/repo', input.prompt);
++  // The image ENTRYPOINT is ["sh", "-c"], so the command string is re-parsed
++  // by a shell: flag tokens stay bare, value tokens are JSON-quoted (double
++  // quotes) so prompts with spaces survive. Values containing $/backticks
++  // would still be shell-expanded — developer-provided prompts only.
++  return exec.run(tag, { repoRoot: input.repoRoot, homeDir: input.homeDir }, `${cmd} ${args.map((a) => (a.startsWith('-') ? a : JSON.stringify(a))).join(' ')}`);
++}
++
++const USAGE = `usage: testbed <command>
++  testbed run     <harness> <version> --prompt "…" --repo <dir> --home <dir>
++  testbed session <harness> <version> --resume <id> --prompt "…"
++  testbed matrix  <harness> --versions a,b --prompt "…"
++`;
++
++export async function main(argv: string[]): Promise<number> {
++  const [cmd, harness, ...rest] = argv;
++  if (cmd === 'run' && harness) {
++    const prompt = rest.includes('--prompt') ? rest[rest.indexOf('--prompt') + 1] : '';
++    const repoRoot = rest.includes('--repo') ? rest[rest.indexOf('--repo') + 1] : process.cwd();
++    const homeDir = rest.includes('--home') ? rest[rest.indexOf('--home') + 1] : join(process.cwd(), 'home');
++    const version = rest[0] ?? '';
++    const built = buildImage({ harness, version, workDir: join(process.cwd(), '.testbed') });
++    if (built.result.status !== 'ok') { console.error(built.result.output); return 1; }
++    const r = runHarness({ harness, version, prompt, repoRoot, homeDir, workDir: join(process.cwd(), '.testbed') });
++    console.log(r.output);
++    return r.status === 'ok' ? 0 : 1;
++  }
++  console.error(USAGE);
++  return cmd ? 1 : 0;
++}
+\ No newline at end of file
+diff --git a/test/tools/verify/containerRunner.test.ts b/test/tools/verify/containerRunner.test.ts
+new file mode 100644
+index 0000000..31987f1
+--- /dev/null
++++ b/test/tools/verify/containerRunner.test.ts
+@@ -0,0 +1,18 @@
++// test/tools/verify/containerRunner.test.ts
++import { describe, it, expect } from 'vitest';
++import { containerRunner } from './containerRunner';
++
++describe('containerRunner', () => {
++  it('has kind container and passes through run', async () => {
++    const runner = containerRunner({
++      build: () => ({ status: 'ok', output: '' }),
++      run: () => ({ status: 'ok', output: 'done' }),
++    });
++    expect(runner.kind).toBe('container');
++    const res = await runner.run({
++      harnessId: 'codex', version: '0.155.1',
++      repoRoot: '/tmp/repo', homeDir: '/tmp/home', prompt: 'x',
++    });
++    expect(res.status).toBe('ok');
++  });
++});
+\ No newline at end of file
+diff --git a/test/tools/verify/containerRunner.ts b/test/tools/verify/containerRunner.ts
+new file mode 100644
+index 0000000..0f32fc7
+--- /dev/null
++++ b/test/tools/verify/containerRunner.ts
+@@ -0,0 +1,38 @@
++// test/tools/verify/containerRunner.ts
++//
++// The `container` Runner: builds the harness image via the testbed (Task 5)
++// and runs the harness's headless command inside a container. An injected
++// DockerExecutor (optional) keeps tests off real docker.
++//
++// Task 4 ruling: Runner.run implementations must never throw — unexpected
++// failures (e.g. mkdtempSync, manifest load) are converted into a failed
++// RunResult so runScenario's snapshot/predicate pipeline still completes.
++import { mkdtempSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import type { Runner, RunContext, RunResult } from './runner';
++import { buildImage, runHarness, type DockerExecutor } from '../testbed';
++
++export function containerRunner(exec?: DockerExecutor): Runner {
++  const executor = exec;
++  return {
++    kind: 'container',
++    async run(ctx: RunContext): Promise<RunResult> {
++      try {
++        const workDir = mkdtempSync(join(tmpdir(), 'hh-testbed-'));
++        const built = buildImage({ harness: ctx.harnessId, version: ctx.version, workDir, exec: executor });
++        if (built.result.status !== 'ok') {
++          return { status: 'failed', output: built.result.output, error: `docker build failed for ${built.tag}` };
++        }
++        const r = runHarness({
++          harness: ctx.harnessId, version: ctx.version, prompt: ctx.prompt,
++          repoRoot: ctx.repoRoot, homeDir: ctx.homeDir, workDir, exec: executor,
++        });
++        return r.status === 'ok' ? { status: 'ok', output: r.output } : { status: 'failed', output: r.output };
++      } catch (e) {
++        // Task 4 ruling: never throw out of run(); surface as a failed RunResult.
++        return { status: 'failed', output: '', error: e instanceof Error ? e.message : String(e) };
++      }
++    },
++  };
++}
+\ No newline at end of file
+diff --git a/test/tools/verify/runner-human.test.ts b/test/tools/verify/runner-human.test.ts
+new file mode 100644
+index 0000000..929b7c8
+--- /dev/null
++++ b/test/tools/verify/runner-human.test.ts
+@@ -0,0 +1,24 @@
++// test/tools/verify/runner-human.test.ts
++import { describe, it, expect } from 'vitest';
++import { humanRunner } from './runner-human';
++
++describe('humanRunner', () => {
++  it('prints the prompt and waits for the human to signal completion', async () => {
++    let printed = '';
++    const asked: string[] = [];
++    const runner = humanRunner({
++      print: (msg) => { printed += msg + '\n'; },
++      ask: async (q) => { asked.push(q); return 'done'; },
++    });
++    expect(runner.kind).toBe('human');
++    const res = await runner.run({
++      harnessId: 'cursor', version: '3.x',
++      repoRoot: '/tmp/repo', homeDir: '/tmp/home', prompt: 'Create a spec file.',
++    });
++    expect(res.status).toBe('ok');
++    expect(printed).toContain('=== human runner');
++    expect(printed).toContain('Create a spec file.');
++    expect(asked.length).toBe(1);
++    expect(asked[0]).toContain('done');
++  });
++});
+\ No newline at end of file
+diff --git a/test/tools/verify/runner-human.ts b/test/tools/verify/runner-human.ts
+new file mode 100644
+index 0000000..0274a54
+--- /dev/null
++++ b/test/tools/verify/runner-human.ts
+@@ -0,0 +1,50 @@
++// test/tools/verify/runner-human.ts
++//
++// The `human` Runner: for harnesses that are human-only (e.g. cursor, per
++// spec R5), this runner prints the scenario prompt and waits for the human
++// operator to signal they have acted in the GUI/IDE before snapshots are
++// taken and the predicate is evaluated.
++//
++// `io` is injectable so tests never touch real stdin; the default io()
++// prompts on the process's stdio.
++//
++// Task 4 ruling: Runner.run implementations must never throw — unexpected
++// failures are converted into a failed RunResult so runScenario's
++// snapshot/predicate pipeline still completes.
++
++import { createInterface } from 'node:readline';
++import type { Runner, RunContext, RunResult } from './runner';
++
++export interface HumanIO {
++  print(msg: string): void;
++  ask(question: string): Promise<string>;
++}
++
++function stdinIO(): HumanIO {
++  const rl = createInterface({ input: process.stdin, output: process.stdout });
++  return {
++    print: (msg) => console.log(msg),
++    ask: (q) => new Promise((resolve) => rl.question(q + ' ', (a) => resolve(a))),
++  };
++}
++
++export function humanRunner(io: HumanIO = stdinIO()): Runner {
++  return {
++    kind: 'human',
++    async run(ctx: RunContext): Promise<RunResult> {
++      try {
++        io.print(`\n=== human runner — ${ctx.harnessId} ${ctx.version} ===`);
++        io.print('Repo: ' + ctx.repoRoot);
++        io.print('\nPaste this prompt into the harness UI/IDE:');
++        io.print('----');
++        io.print(ctx.prompt);
++        io.print('----');
++        await io.ask('Once the harness has acted, type "done" and press Enter:');
++        return { status: 'ok', output: 'human signaled completion' };
++      } catch (e) {
++        // Task 4 ruling: never throw out of run(); surface as a failed RunResult.
++        return { status: 'failed', output: '', error: e instanceof Error ? e.message : String(e) };
++      }
++    },
++  };
++}
+\ No newline at end of file
+diff --git a/test/tools/verify/runner.test.ts b/test/tools/verify/runner.test.ts
+new file mode 100644
+index 0000000..4729f69
+--- /dev/null
++++ b/test/tools/verify/runner.test.ts
+@@ -0,0 +1,63 @@
++// test/tools/verify/runner.test.ts
++import { describe, it, expect, beforeEach, afterEach } from 'vitest';
++import { mkdtempSync, rmSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import { runScenario, type Runner, type RunContext } from './runner';
++import { SCENARIO_SUITE } from './scenarios';
++
++describe('runScenario', () => {
++  let repoRoot: string;
++  let homeDir: string;
++  beforeEach(() => {
++    repoRoot = mkdtempSync(join(tmpdir(), 'hh-repo-'));
++    homeDir = mkdtempSync(join(tmpdir(), 'hh-home-'));
++  });
++  afterEach(() => {
++    rmSync(repoRoot, { recursive: true, force: true });
++    rmSync(homeDir, { recursive: true, force: true });
++  });
++
++  it('writes setup files, runs the runner, and evaluates a deterministic predicate', async () => {
++    // Use skill-wiring: setup writes .agents/skills/...; no model call; runner is a no-op.
++    const runner: Runner = {
++      kind: 'container',
++      run: async (_ctx: RunContext) => ({ status: 'ok', output: '' }),
++    };
++    const outcome = await runScenario(SCENARIO_SUITE['skill-wiring'], runner, {
++      harnessId: 'codex', version: '0.155.1', repoRoot, homeDir,
++      prompt: SCENARIO_SUITE['skill-wiring'].prompt,
++    });
++    expect(outcome.result).toBe(true);
++    expect(outcome.evidence).toEqual(['deterministic']);
++  });
++
++  it('records a failed predicate as result false', async () => {
++    const runner: Runner = { kind: 'container', run: async () => ({ status: 'ok', output: '' }) };
++    const outcome = await runScenario(SCENARIO_SUITE['agentsdoc-load-canary'], runner, {
++      harnessId: 'codex', version: '0.155.1', repoRoot, homeDir,
++      prompt: SCENARIO_SUITE['agentsdoc-load-canary'].prompt,
++    });
++    expect(outcome.result).toBe(false);
++  });
++
++  it('survives a throwing runner: still snapshots, evaluates the predicate, and carries the error as note', async () => {
++    const runner: Runner = {
++      kind: 'container',
++      run: async () => {
++        throw new Error('spawn ENOENT');
++      },
++    };
++    // skill-wiring has a deterministic-pass predicate over post-run snapshots;
++    // the pipeline must continue past the rejected run, so result is true
++    // while note records the failed-run diagnostics.
++    const outcome = await runScenario(SCENARIO_SUITE['skill-wiring'], runner, {
++      harnessId: 'codex', version: '0.155.1', repoRoot, homeDir,
++      prompt: SCENARIO_SUITE['skill-wiring'].prompt,
++    });
++    expect(outcome.result).toBe(true);
++    expect(outcome.passes).toBe(1);
++    expect(outcome.runs).toBe(1);
++    expect(outcome.note).toBe('spawn ENOENT');
++  });
++});
+\ No newline at end of file
+diff --git a/test/tools/verify/runner.ts b/test/tools/verify/runner.ts
+new file mode 100644
+index 0000000..b804415
+--- /dev/null
++++ b/test/tools/verify/runner.ts
+@@ -0,0 +1,86 @@
++// test/tools/verify/runner.ts
++//
++// Runner interface + runScenario orchestration: write setup files, snapshot
++// repo/home before and after the run, evaluate the scenario predicate over
++// the post-run snapshots.
++//
++// `HarnessId` is imported from `./schema` (not `src/harnesses`) per the
++// Task 1 ruling: test/tools production code must not import from src/,
++// even for types (TS6059 under the tools tsconfig rootDir).
++import { mkdirSync, symlinkSync } from 'node:fs';
++import { dirname, join } from 'node:path';
++import { writeAssets } from '../fs';
++import { snapshot, diffFiles } from './snapshot';
++import type { HarnessId, Scenario, ScenarioContext, ScenarioOutcome, SetupFile } from './schema';
++
++export interface RunContext {
++  harnessId: HarnessId;
++  version: string;
++  repoRoot: string;
++  homeDir: string;
++  prompt: string;
++}
++
++export interface RunResult {
++  status: 'ok' | 'failed';
++  output: string;
++  error?: string;
++}
++
++export interface Runner {
++  kind: 'container' | 'human';
++  run(ctx: RunContext): Promise<RunResult>;
++}
++
++function writeSetup(repoRoot: string, homeDir: string, files: SetupFile[]): void {
++  mkdirSync(repoRoot, { recursive: true });
++  mkdirSync(homeDir, { recursive: true });
++  for (const f of files) {
++    if (f.kind === 'symlink') {
++      const target = join(repoRoot, f.path);
++      mkdirSync(dirname(target), { recursive: true });
++      symlinkSync(f.symlinkTarget ?? '', target);
++    } else {
++      writeAssets(repoRoot, [{ path: f.path, content: f.content ?? '' }]);
++    }
++  }
++}
++
++export async function runScenario(
++  scenario: Scenario,
++  runner: Runner,
++  ctx: RunContext
++): Promise<ScenarioOutcome> {
++  writeSetup(ctx.repoRoot, ctx.homeDir, scenario.setup.files);
++  const beforeRepo = snapshot(ctx.repoRoot);
++  const beforeHome = snapshot(ctx.homeDir);
++
++  // A throwing runner (spawn ENOENT, container timeout) must not abort the
++  // pipeline: record the failure and continue to snapshots/predicate so the
++  // outcome still records the failed run. Non-throwing behavior unchanged.
++  let result: RunResult;
++  try {
++    result = await runner.run(ctx);
++  } catch (e) {
++    result = { status: 'failed', output: '', error: e instanceof Error ? e.message : String(e) };
++  }
++
++  const afterRepo = snapshot(ctx.repoRoot);
++  const afterHome = snapshot(ctx.homeDir);
++  const scenarioCtx: ScenarioContext = {
++    repoRoot: ctx.repoRoot, homeDir: ctx.homeDir,
++    repo: afterRepo, home: afterHome, beforeRepo, beforeHome,
++  };
++  const pr = scenario.predicate(scenarioCtx);
++  return {
++    scenarioId: scenario.id,
++    result: pr.pass,
++    runs: 1,
++    passes: pr.pass ? 1 : 0,
++    evidence: scenario.evidenceLevels,
++    reason: pr.reason,
++    note: result.status === 'failed' ? result.error ?? result.output : undefined,
++  };
++}
++
++export { diffFiles };
+\ No newline at end of file
+diff --git a/test/tools/verify/scenarios.test.ts b/test/tools/verify/scenarios.test.ts
+new file mode 100644
+index 0000000..023595b
+--- /dev/null
++++ b/test/tools/verify/scenarios.test.ts
+@@ -0,0 +1,30 @@
++// test/tools/verify/scenarios.test.ts
++import { describe, it, expect } from 'vitest';
++import { SCENARIO_SUITE } from './scenarios';
++
++describe('scenario suite', () => {
++  it('defines all seven scenarios with unique ids', () => {
++    expect(Object.keys(SCENARIO_SUITE).sort()).toEqual([
++      'agentsdoc-behavioral', 'agentsdoc-load-canary', 'hermes-trust-gate',
++      'skill-auto-discovery', 'skill-explicit-invocation', 'skill-scoping', 'skill-wiring',
++    ].sort());
++  });
++
++  it('keeps canary strings out of prompts (invariant)', () => {
++    for (const s of Object.values(SCENARIO_SUITE)) {
++      if (s.setup.canary) {
++        expect(s.prompt).not.toContain(s.setup.canary);
++      }
++    }
++  });
++
++  it('splits skill discovery into the wiring/explicit/auto trio', () => {
++    expect(SCENARIO_SUITE['skill-wiring'].evidenceLevels).toContain('deterministic');
++    expect(SCENARIO_SUITE['skill-explicit-invocation'].evidenceLevels).toContain('canary');
++    expect(SCENARIO_SUITE['skill-auto-discovery'].evidenceLevels).toContain('canary');
++  });
++
++  it('restricts skill-scoping to the documented harnesses', () => {
++    expect(SCENARIO_SUITE['skill-scoping'].harnessCompat).toEqual(['cursor', 'cursor-cli', 'opencode']);
++  });
++});
+\ No newline at end of file
+diff --git a/test/tools/verify/scenarios.ts b/test/tools/verify/scenarios.ts
+new file mode 100644
+index 0000000..116df08
+--- /dev/null
++++ b/test/tools/verify/scenarios.ts
+@@ -0,0 +1,161 @@
++// test/tools/verify/scenarios.ts
++//
++// S1–S5 convention-verification scenario suite, defined as data.
++// `HarnessId` is imported from `./schema` (not `src/harnesses`) per the
++// Task 1 ruling: test/tools production code must not import from src/,
++// even for types (TS6059 under the tools tsconfig rootDir). schema.ts
++// exports a drift-guarded copy of the 8-member union.
++import type { HarnessId, Scenario, ScenarioContext, Predicate } from './schema';
++
++const ALL_CLI: HarnessId[] = ['claude-code', 'codex', 'opencode', 'hermes', 'pi', 'deepseek', 'cursor-cli'];
++
++function fileInDelta(re: RegExp): Predicate {
++  return (ctx) => {
++    const match = Object.keys(ctx.repo.files).find((p) => re.test(p));
++    return match
++      ? { pass: true, reason: `found ${match}` }
++      : { pass: false, reason: `no file matching ${re} in repo snapshot` };
++  };
++}
++
++function fileContentIncludes(path: string, needle: string): Predicate {
++  return (ctx) => {
++    const f = ctx.repo.files[path];
++    if (!f || f.type !== 'file') return { pass: false, reason: `${path} missing or not a file` };
++    return (f.content ?? '').includes(needle)
++      ? { pass: true, reason: `${path} contains ${JSON.stringify(needle)}` }
++      : { pass: false, reason: `${path} does not contain ${JSON.stringify(needle)}` };
++  };
++}
++
++const ZEBRA_DOC = 'zebra-9f3k2';
++const ZEBRA_SKILL = 'zebra-skill';
++const COD_CANARY = 'COD-X7K9Z';
++
++function zebraSkillBody(): string {
++  return [
++    '---',
++    `name: ${ZEBRA_SKILL}`,
++    'description: Writes the project marker on request.',
++    '---',
++    `When invoked, write the exact string "${COD_CANARY}" into a file named marker.txt in the repo root.`,
++    '',
++  ].join('\n');
++}
++
++export const SCENARIO_SUITE: Record<string, Scenario> = {
++  'agentsdoc-load-canary': {
++    id: 'agentsdoc-load-canary',
++    conventionUnderTest: 'agentsDoc',
++    harnessCompat: ALL_CLI,
++    setup: {
++      files: [{
++        path: 'AGENTS.md',
++        content: `# Project conventions\nWhen asked to create a specification document, name the file "${ZEBRA_DOC}.spec.md" (that exact filename, no other).\n`,
++      }],
++      canary: `${ZEBRA_DOC}.spec.md`,
++    },
++    prompt: 'Create a specification document that plans the scaffolding of a JavaScript library.',
++    predicate: fileInDelta(new RegExp(`${ZEBRA_DOC}\\.spec\\.md`)),
++    evidenceLevels: ['canary'],
++  },
++
++  'agentsdoc-behavioral': {
++    id: 'agentsdoc-behavioral',
++    conventionUnderTest: 'agentsDoc',
++    harnessCompat: ALL_CLI,
++    setup: {
++      files: [{
++        path: 'AGENTS.md',
++        content: '# Project conventions\nWhen creating a specification document, use the `.spec.md` extension and save it to the project root.\n',
++      }],
++    },
++    prompt: 'Create a specification document that plans the scaffolding of a JavaScript library.',
++    predicate: fileInDelta(/^[^/]+\.spec\.md$/),
++    evidenceLevels: ['behavioral'],
++  },
++
++  'skill-wiring': {
++    id: 'skill-wiring',
++    conventionUnderTest: 'skills',
++    harnessCompat: [...ALL_CLI, 'cursor'],
++    setup: {
++      files: [{
++        path: '.agents/skills/writing-tests/SKILL.md',
++        content: '---\nname: writing-tests\ndescription: Write failing tests before implementation.\n---\nWrite the failing test first.\n',
++      }],
++    },
++    prompt: '',
++    predicate: (ctx) => {
++      const native = ctx.repo.files['.agents/skills/writing-tests/SKILL.md'];
++      const claude = ctx.repo.files['.claude/skills/writing-tests'];
++      const claudeOk = claude && claude.type === 'symlink' && claude.target?.includes('.agents/skills/writing-tests');
++      if (native && native.type === 'file') return { pass: true, reason: 'native .agents/skills entry present' };
++      if (claudeOk) return { pass: true, reason: '.claude/skills symlink → canon present' };
++      return { pass: false, reason: 'neither native skills dir nor claude symlink present' };
++    },
++    evidenceLevels: ['deterministic'],
++  },
++
++  'skill-explicit-invocation': {
++    id: 'skill-explicit-invocation',
++    conventionUnderTest: 'skills',
++    harnessCompat: [...ALL_CLI, 'cursor'],
++    setup: { files: [{ path: `.agents/skills/${ZEBRA_SKILL}/SKILL.md`, content: zebraSkillBody() }], canary: COD_CANARY },
++    prompt: `Use the ${ZEBRA_SKILL} skill.`,
++    predicate: fileContentIncludes('marker.txt', COD_CANARY),
++    evidenceLevels: ['canary'],
++  },
++
++  'skill-auto-discovery': {
++    id: 'skill-auto-discovery',
++    conventionUnderTest: 'skills',
++    harnessCompat: ALL_CLI,
++    setup: {
++      files: [{
++        path: `.agents/skills/${ZEBRA_SKILL}/SKILL.md`,
++        content: '---\nname: ' + ZEBRA_SKILL + '\ndescription: Use whenever the user asks to summarize a project. Then write the exact string "' + COD_CANARY + '" into marker.txt at the repo root.\n---\nSummarize the project and mark the marker file.\n',
++      }],
++      canary: COD_CANARY,
++    },
++    prompt: 'Summarize this project.',
++    predicate: fileContentIncludes('marker.txt', COD_CANARY),
++    evidenceLevels: ['canary'],
++  },
++
++  'skill-scoping': {
++    id: 'skill-scoping',
++    conventionUnderTest: 'skills-scoping',
++    harnessCompat: ['cursor', 'cursor-cli', 'opencode'],
++    setup: {
++      files: [{
++        path: 'apps/web/.agents/skills/web-skill/SKILL.md',
++        content: '---\nname: web-skill\ndescription: Use when working in apps/web.\n---\n(content)\n',
++      }],
++    },
++    prompt: 'Work on the backend service and list which skills are available to you.',
++    predicate: () => ({ pass: false, reason: 'semantic — requires a judge' }),
++    rubric: [
++      { id: 'scoping-correct', text: 'was web-skill correctly scoped to apps/web only (not surfaced for backend work)?' },
++      { id: 'list-reflects-scoping', text: "did the harness's reported skill list reflect the scoping?" },
++    ],
++    evidenceLevels: ['rubric'],
++  },
++
++  'hermes-trust-gate': {
++    id: 'hermes-trust-gate',
++    conventionUnderTest: 'trustGate',
++    harnessCompat: ['hermes'],
++    setup: { files: [{ path: `.agents/skills/${ZEBRA_SKILL}/SKILL.md`, content: zebraSkillBody() }], canary: COD_CANARY },
++    prompt: `Use the ${ZEBRA_SKILL} skill.`,
++    predicate: (ctx) => {
++      const cfg = ctx.home.files['.hermes/config.yaml'];
++      if (!cfg || cfg.type !== 'file') return { pass: false, reason: '~/.hermes/config.yaml not written' };
++      const trusted = (cfg.content ?? '').includes(ctx.repoRoot);
++      return trusted
++        ? { pass: true, reason: 'trust ledger gained the repo path' }
++        : { pass: false, reason: 'repo path not found in trust ledger' };
++    },
++    evidenceLevels: ['behavioral'],
++  },
++};
+\ No newline at end of file
+diff --git a/test/tools/verify/schema.test.ts b/test/tools/verify/schema.test.ts
+new file mode 100644
+index 0000000..80887c2
+--- /dev/null
++++ b/test/tools/verify/schema.test.ts
+@@ -0,0 +1,31 @@
++// test/tools/verify/schema.test.ts
++import { describe, it, expect } from 'vitest';
++import { ALL_HARNESS_IDS } from '../../../src/harnesses';
++import type { HarnessId, Snapshot } from './schema';
++
++const emptySnapshot: Snapshot = { files: {} };
++
++// Mirrors the union in schema.ts; `satisfies` rejects invalid members at
++// typecheck time and the runtime compare below catches src-side drift.
++const SCHEMA_HARNESS_IDS = [
++  'claude-code',
++  'cursor',
++  'cursor-cli',
++  'opencode',
++  'codex',
++  'hermes',
++  'pi',
++  'deepseek',
++] as const satisfies readonly HarnessId[];
++
++describe('schema', () => {
++  it('is importable and Snapshot is structurally stable', () => {
++    const s: Snapshot = { files: {} };
++    expect(s.files).toEqual({});
++    expect(emptySnapshot.files).toEqual({});
++  });
++
++  it('HarnessId union stays in sync with src/harnesses.ts', () => {
++    expect([...SCHEMA_HARNESS_IDS].sort()).toEqual([...ALL_HARNESS_IDS].sort());
++  });
++});
+diff --git a/test/tools/verify/schema.ts b/test/tools/verify/schema.ts
+new file mode 100644
+index 0000000..a2c1156
+--- /dev/null
++++ b/test/tools/verify/schema.ts
+@@ -0,0 +1,89 @@
++// test/tools/verify/schema.ts
++//
++// `HarnessId` is duplicated from `src/harnesses.ts` (same 8-member union)
++// because `test/tools` production code cannot import `src/`: the tools
++// tsconfig's `rootDir` makes even type-only imports a compile error (TS6059).
++// Keep in sync with `src/harnesses.ts` — schema.test.ts guards this.
++
++/** Harness identifiers; mirrors `src/harnesses.ts` `ALL_HARNESS_IDS`. */
++export type HarnessId =
++  | 'claude-code'
++  | 'cursor'
++  | 'cursor-cli'
++  | 'opencode'
++  | 'codex'
++  | 'hermes'
++  | 'pi'
++  | 'deepseek';
++
++export type EvidenceLevel = 'deterministic' | 'gateway' | 'canary' | 'behavioral' | 'rubric';
++export type ConventionUnderTest = 'agentsDoc' | 'skills' | 'skills-scoping' | 'trustGate';
++
++export interface SetupFile {
++  path: string;
++  content?: string;
++  kind?: 'file' | 'symlink';
++  /** Required when kind === 'symlink': the link target (relative or absolute). */
++  symlinkTarget?: string;
++}
++
++export interface FileEntry {
++  type: 'file' | 'symlink';
++  /** File content (small repos; full text, not hashed — scenarios are tiny). */
++  content?: string;
++  /** Symlink target. */
++  target?: string;
++}
++
++export interface Snapshot {
++  /** path → entry, paths relative to the snapshot root. */
++  files: Record<string, FileEntry>;
++}
++
++export interface ScenarioContext {
++  repoRoot: string;
++  homeDir: string;
++  /** Post-run repo snapshot. */
++  repo: Snapshot;
++  /** Post-run home snapshot (for trust-ledger predicates like S5). */
++  home: Snapshot;
++  /** Pre-run repo snapshot (for delta predicates). */
++  beforeRepo: Snapshot;
++  /** Pre-run home snapshot. */
++  beforeHome: Snapshot;
++}
++
++export interface PredicateResult {
++  pass: boolean;
++  /** Human-readable reason, surfaced in the report. */
++  reason: string;
++}
++
++/** A deterministic check over the post-prompt snapshot delta. */
++export type Predicate = (ctx: ScenarioContext) => PredicateResult;
++
++export interface RubricCriterion {
++  id: string;
++  text: string;
++}
++
++export interface Scenario {
++  id: string;
++  conventionUnderTest: ConventionUnderTest;
++  harnessCompat: HarnessId[];
++  setup: { files: SetupFile[]; canary?: string };
++  prompt: string;
++  predicate: Predicate;
++  rubric?: RubricCriterion[];
++  evidenceLevels: EvidenceLevel[];
++}
++
++export interface ScenarioOutcome {
++  scenarioId: string;
++  result: boolean;
++  runs: number;
++  passes: number;
++  evidence: EvidenceLevel[];
++  reason?: string;
++  note?: string;
++}
+diff --git a/test/tools/verify/snapshot.test.ts b/test/tools/verify/snapshot.test.ts
+new file mode 100644
+index 0000000..05bb8e6
+--- /dev/null
++++ b/test/tools/verify/snapshot.test.ts
+@@ -0,0 +1,33 @@
++// test/tools/verify/snapshot.test.ts
++import { describe, it, expect, beforeEach, afterEach } from 'vitest';
++import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import { snapshot, diffFiles } from './snapshot';
++
++describe('snapshot', () => {
++  let root: string;
++  beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'hh-snap-')); });
++  afterEach(() => { rmSync(root, { recursive: true, force: true }); });
++
++  it('captures file content and type', () => {
++    writeFileSync(join(root, 'a.txt'), 'hello');
++    const snap = snapshot(root);
++    expect(snap.files['a.txt']).toEqual({ type: 'file', content: 'hello' });
++  });
++
++  it('captures symlinks with target', () => {
++    mkdirSync(join(root, 'target-dir'));
++    writeFileSync(join(root, 'target-dir', 'SKILL.md'), 'x');
++    symlinkSync(join(root, 'target-dir'), join(root, '.claude'));
++    const snap = snapshot(root);
++    expect(snap.files['.claude']).toEqual({ type: 'symlink', target: 'target-dir' });
++  });
++
++  it('diffFiles returns added and changed paths', () => {
++    const before = snapshot(root);
++    writeFileSync(join(root, 'new.md'), 'x');
++    const after = snapshot(root);
++    expect(diffFiles(before, after)).toContain('new.md');
++  });
++});
+diff --git a/test/tools/verify/snapshot.ts b/test/tools/verify/snapshot.ts
+new file mode 100644
+index 0000000..9b59967
+--- /dev/null
++++ b/test/tools/verify/snapshot.ts
+@@ -0,0 +1,50 @@
++// test/tools/verify/snapshot.ts
++import { lstatSync, readdirSync, readFileSync, readlinkSync } from 'node:fs';
++import { join, relative, isAbsolute } from 'node:path';
++import type { Snapshot, FileEntry } from './schema';
++
++function walk(dir: string, base: string, out: Record<string, FileEntry>): void {
++  for (const name of readdirSync(dir)) {
++    if (name === '.git') continue;
++    const full = join(dir, name);
++    const rel = full.slice(base.length + 1);
++    const st = lstatSync(full);
++    if (st.isSymbolicLink()) {
++      // Normalize absolute link targets to be relative to the snapshot root
++      // so setup-created absolute links (e.g. `${repoRoot}/target-dir`)
++      // compare equal across runs/roots.
++      const raw = readlinkSync(full);
++      out[rel] = {
++        type: 'symlink',
++        target: isAbsolute(raw) ? relative(base, raw) : raw,
++      };
++    } else if (st.isDirectory()) {
++      walk(full, base, out);
++    } else if (st.isFile()) {
++      out[rel] = { type: 'file', content: readFileSync(full, 'utf8') };
++    }
++  }
++}
++
++export function snapshot(root: string): Snapshot {
++  const files: Record<string, FileEntry> = {};
++  try {
++    walk(root, root, files);
++  } catch {
++    // root may not exist yet — treat as empty snapshot.
++  }
++  return { files };
++}
++
++function key(f: FileEntry): string {
++  return f.type === 'symlink' ? `link:${f.target ?? ''}` : `file:${f.content ?? ''}`;
++}
++
++export function diffFiles(before: Snapshot, after: Snapshot): string[] {
++  const changed: string[] = [];
++  for (const [path, entry] of Object.entries(after.files)) {
++    const prev = before.files[path];
++    if (!prev || key(prev) !== key(entry)) changed.push(path);
++  }
++  return changed;
++}
