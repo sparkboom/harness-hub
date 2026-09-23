@@ -10,6 +10,29 @@
 
 **Spec:** `deliverables/current/2026-09-21-2212-harness-version-management/harness-version-management.spec.md` (R7). Supporting: [`gateway.md`](./gateway.md).
 
+## Carried from Plan B
+
+Deferred findings and rulings from Plan B's ledger
+(`../plan-b-testbed-scenarios/plan-b-testbed-scenarios.progress.md`) and
+sequencing constraints this plan must respect:
+
+- **Base branch (hard sequencing constraint):** this plan modifies Plan B files
+  (`test/tools/verify/runner.ts` `RunContext`, `test/tools/verify/containerRunner.ts`,
+  `test/tools/testbed.ts` `runHarness` — see Tasks 5–6). It **must be based on
+  Plan B's merged state** (merge `harness-version-mgmt-plan-b` into main first);
+  otherwise these edits will conflict. Plan B's deferred minors (trailing
+  newlines, `dockerfileFor` `pkg` guard, `main()` arg parsing, `snapshot()`
+  `ENOENT`, `hh-testbed-*` cleanup) are intentionally out of scope here — apply
+  only the `RunContext`/provisioning edits this plan specifies.
+- **`gateway` Level-1 evidence path:** this plan's `gatewayRunner` surfaces
+  `gatewayInspection`; Plan C's `confidence.ts` already reserves `gateway: 1` in
+  its `RANK` table and maps it to the `load` question. Feed it via the
+  `RunResult.gatewayInspection` field added in Task 5 — do not invent a second
+  evidence channel.
+- **`skill-wiring` empty-prompt:** Plan B already guards empty-prompt dispatch in
+  `containerRunner`. This plan does not need to revisit it; the scenario's
+  semantics are settled by `scenarios.md:94-110`.
+
 ## Global Constraints
 
 - This plan touches **`test/tools/gateway.ts`, `test/tools/gateway.mjs`, and `test/tools/verify/`** — never `src/`.

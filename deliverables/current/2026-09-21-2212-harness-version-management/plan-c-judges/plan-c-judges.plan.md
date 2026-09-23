@@ -10,6 +10,33 @@
 
 **Spec:** `deliverables/current/2026-09-21-2212-harness-version-management/harness-version-management.spec.md` (R6 judge layer). Supporting: [`evidence-and-judges.md`](./evidence-and-judges.md).
 
+## Carried from Plan B
+
+Deferred findings and rulings from Plan B's ledger
+(`../plan-b-testbed-scenarios/plan-b-testbed-scenarios.progress.md`) that this
+plan owns or must not contradict:
+
+- **Confidence-on-empty (Task 8 minor):** empty/empty-evidence outcomes
+  currently fall through to `confidence 'low'` implicitly. This plan replaces
+  that placeholder in `report.ts` via `confidence.ts` — **do not drop the
+  empty/empty edge case**: confirm `computeConfidence` returns `low` (not
+  `undefined`/crash) for a zero-outcome or zero-evidence input.
+- **`skill-wiring` empty-prompt (Final-I2):** the *runtime* empty-prompt
+  dispatch hazard is already guarded (Plan B's final fix wave added a
+  `containerRunner` empty-prompt dispatch guard). The *semantic* question —
+  whether S3a verifies live wiring performed *during* a run — is already
+  settled by `scenarios.md:94-110` (S3a is "no model invocation at all …
+  validates harness-hub's own output"), so no predicate revision is required.
+  This note is recorded so the implementer doesn't re-litigate it.
+- **`gateway` Level-1 rank:** `computeConfidence`'s `RANK` table below already
+  reserves `gateway: 1`; Plan D feeds it via `gatewayRunner`. Keep the rank and
+  the `QuestionKey` mapping aligned with Plan D's `gatewayInspection` surface.
+- **Housekeeping minors deferred from Plan B** (NOT owned by this plan; leave
+  alone): trailing newlines across ~12 files, `dockerfileFor` npm `pkg` guard,
+  `main()` `--prompt`-first arg parsing, `snapshot()` broad catch →
+  `ENOENT`, `hh-testbed-*` temp cleanup, `reconcile:` error prefix. Safe to fold
+  into a future sweep; none change this plan's interface.
+
 ## Global Constraints
 
 - This plan touches **`test/tools/verify/` and `test/tools/report.ts` only** — never `src/`.
